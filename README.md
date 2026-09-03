@@ -91,6 +91,21 @@ Open `webapp/public/index.html` in a browser (or serve via any HTTP server).
 | `/api/sessions/{id}/history` | GET | Conversation history |
 | `/api/sessions/{id}` | DELETE | Clear session |
 
+## Deploy to Render
+
+1. Push this repo to GitHub
+2. Go to [https://dashboard.render.com](https://dashboard.render.com) → **New** → **Blueprint**
+3. Connect your GitHub repo and click **Apply**
+4. Render auto-detects `render.yaml` and deploys
+5. Add API keys as **Environment Variables** in Render dashboard:
+   - `OPENAI_API_KEY`
+   - `ANTHROPIC_API_KEY` (optional)
+   - `GROQ_API_KEY` (optional)
+   - `OPENROUTER_API_KEY` (optional)
+6. Done — your API is live at `https://ed-triage-assist-api.onrender.com`
+
+**Docs**: `/docs` | **Health**: `/health` | **Chat**: `POST /api/chat`
+
 ## Keyboard Shortcuts
 - `1-5`: Switch 3D views
 - `C`: Open AI Chat sidebar

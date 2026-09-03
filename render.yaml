@@ -1,0 +1,73 @@
+services:
+  - type: web
+    name: ed-triage-assist-api
+    runtime: python
+    region: frankfurt
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.api.main:app --host 0.0.0.0 --port $PORT --workers 2
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: ENVIRONMENT
+        value: production
+      - key: LLM_PROVIDER
+        value: openai
+      - key: LLM_MODEL
+        value: gpt-4o-mini
+      - key: LLM_TEMPERATURE
+        value: "0.1"
+      - key: LLM_MAX_TOKENS
+        value: "2000"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: EMBEDDING_MODEL
+        value: sentence-transformers/all-MiniLM-L6-v2
+      - key: EMBEDDING_DIMENSION
+        value: "384"
+      - key: CHROMA_PERSIST_DIR
+        value: /tmp/chroma
+      - key: CHROMA_COLLECTION_NAME
+        value: ed_triage_knowledge
+      - key: CHILD_CHUNK_SIZE
+        value: "256"
+      - key: CHILD_CHUNK_OVERLAP
+        value: "30"
+      - key: PARENT_CHUNK_SIZE
+        value: "1024"
+      - key: PARENT_CHUNK_OVERLAP
+        value: "100"
+      - key: TOP_K_RETRIEVAL
+        value: "20"
+      - key: TOP_K_RERANK
+        value: "5"
+      - key: TOP_K_FINAL
+        value: "3"
+      - key: MMR_LAMBDA
+        value: "0.5"
+      - key: RERANKER_MODEL
+        value: cross-encoder/ms-marco-MiniLM-L-6-v2
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        value: "8000"
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: DOCUMENTS_DIR
+        value: data
+      - key: PROCESSED_DIR
+        value: data/processed
+      - key: MAX_FILE_SIZE_MB
+        value: "50"
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: chroma-data
+      mountPath: /tmp/chroma
+      sizeGB: 1

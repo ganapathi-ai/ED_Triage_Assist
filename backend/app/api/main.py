@@ -1,50 +1,36 @@
-"""Enhanced FastAPI app with all prediction endpoints"""
+"""ED Triage Assist — RAG Backend API"""
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
+import os
 import logging
 import time
-import uuid
-from datetime import datetime
-
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
 from app.config import settings
-from app.services.rag_pipeline import rag_pipeline
-from app.services.vector_store import vector_store
-from app.services.memory import conversation_memory
 from app.models.schemas import (
-    PatientInput, VitalSigns, ESIPredictionRequest, DeteriorationRequest,
-    WaitTimeRequest, TriagePredictionResponse, SearchRequest, SearchResponse,
-    HealthResponse, StatsResponse
+    ChatRequest, ChatResponse, Source,
+    ESIRequest, ESIResponse, DeteriorationRequest, DeteriorationResponse,
+    WaitTimeRequest, WaitTimeResponse, TriageRequest, TriageResponse,
+    SearchRequest, SearchResponse, SearchResult, IngestResponse, HealthResponse
 )
-from app.models.esi_predictor import esi_predictor, ESIFeatures
-from app.models.deterioration_predictor import deterioration_predictor
-from app.models.wait_time_predictor import wait_time_predictor
+from app.models.esi_predictor import ESIPredictor
+from app.models.deterioration_predictor import DeteriorationPredictor
+from app.models.wait_time_predictor import WaitTimePredictor
+from app.services.rag_pipeline import RAGPipeline
+from app.services.rag_pipeline import (
+    HybridSearchEngine, Reranker, QueryEnhancer,
+    MemoryManager, CitationTracker
+)
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-start_time = time.time()
-
-
-# ── Request Models ─────────────────────────────────────────────
-class ChatRequest(BaseModel):
-    query: str
-    session_id: str = "default"
-
-
-class ChatResponse(BaseModel):
-    answer: str
-    sources: list
-    confidence: float
-    latency_ms: float
-
-
-# ── App Setup ──────────────────────────────────────────────────
 app = FastAPI(
-    title="ED Triage Assist — AI RAG + Prediction API",
-    description="Emergency Department Triage: RAG knowledge base + ESI prediction + Deterioration + Wait time",
-    version="2.0.0",
+    title="ED Triage Assist API",
+    description="RAG-powered Emergency Department Triage Assistant with AI predictions",
+    version="5.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 app.add_middleware(
@@ -55,294 +41,315 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ─── Lazy-loaded singletons ───────────────────────────────────────────────
+_rag_pipeline: RAGPipeline | None = None
+_esi_predictor: ESIPredictor | None = None
+_deterioration_predictor: DeteriorationPredictor | None = None
+_wait_time_predictor: WaitTimePredictor | None = None
 
-# ── Health & Stats ─────────────────────────────────────────────
-@app.get("/")
-async def root():
-    return {"status": "running", "service": "ED Triage Assist RAG + Prediction API", "version": "2.0.0"}
 
+def get_rag() -> RAGPipeline:
+    global _rag_pipeline
+    if _rag_pipeline is None:
+        logger.info("Initializing RAG pipeline...")
+        _rag_pipeline = RAGPipeline()
+        _rag_pipeline.initialize()
+    return _rag_pipeline
+
+
+def get_esi() -> ESIPredictor:
+    global _esi_predictor
+    if _esi_predictor is None:
+        _esi_predictor = ESIPredictor()
+    return _esi_predictor
+
+
+def get_deterioration() -> DeteriorationPredictor:
+    global _deterioration_predictor
+    if _deterioration_predictor is None:
+        _deterioration_predictor = DeteriorationPredictor()
+    return _deterioration_predictor
+
+
+def get_wait_time() -> WaitTimePredictor:
+    global _wait_time_predictor
+    if _wait_time_predictor is None:
+        _wait_time_predictor = WaitTimePredictor()
+    return _wait_time_predictor
+
+
+# ─── Health ───────────────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse)
-async def health():
-    return HealthResponse(
-        status="healthy",
-        vector_store=vector_store.get_stats(),
-        models={
-            "esi": esi_predictor.model_version,
-            "deterioration": "rules-v1.0",
-            "wait_time": "rules-v1.0",
-            "embeddings": settings.embedding_model,
-        },
-        memory=conversation_memory.get_stats(),
-        uptime_seconds=round(time.time() - start_time, 1),
-    )
+async def health_check():
+    return HealthResponse(status="ok", service="ED Triage Assist", version="5.0.0")
 
 
-@app.get("/api/stats", response_model=StatsResponse)
-async def get_stats():
-    return StatsResponse(
-        vector_store=vector_store.get_stats(),
-        memory=conversation_memory.get_stats(),
-        pipeline={"total_queries": rag_pipeline.total_queries, "avg_latency_ms": round(rag_pipeline.avg_latency, 1)},
-        predictions={
-            "esi": esi_predictor.total_predictions,
-            "deterioration": deterioration_predictor.total_predictions,
-            "wait_time": wait_time_predictor.total_predictions,
-        },
-    )
+# ─── Chat ─────────────────────────────────────────────────────────────────
 
-
-# ── RAG Chat ───────────────────────────────────────────────────
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    if not request.query.strip():
-        raise HTTPException(400, "Query cannot be empty")
+async def chat_endpoint(request: ChatRequest):
+    start = time.time()
     try:
-        result = rag_pipeline.query(
-            user_query=request.query,
-            session_id=request.session_id,
-            use_hybrid=True,
-            use_reranking=True,
+        pipeline = get_rag()
+        result = pipeline.query(
+            question=request.question,
+            conversation_history=None,
+            filters={},
         )
+        sources = [
+            Source(
+                document=s.get("source", ""),
+                page=s.get("page"),
+                excerpt=s.get("text", "")[:300],
+                relevance=float(s.get("rerank_score", s.get("score", 0.0))),
+            )
+            for s in result.get("sources", [])[:5]
+        ]
         return ChatResponse(
-            answer=result.answer,
-            sources=result.sources,
-            confidence=result.confidence,
-            latency_ms=result.latency_ms,
+            answer=result.get("answer", ""),
+            confidence=float(result.get("confidence", 0.0)),
+            sources=sources,
+            latency_ms=round((time.time() - start) * 1000, 1),
         )
-    except Exception as e:
-        logger.error(f"Chat error: {e}")
-        raise HTTPException(500, f"Processing failed: {str(e)}")
+    except Exception as exc:
+        logger.error(f"Chat error: {exc}")
+        return ChatResponse(
+            answer=f"An error occurred: {str(exc)}. Please try again.",
+            confidence=0.0,
+            sources=[],
+            latency_ms=round((time.time() - start) * 1000, 1),
+        )
 
 
-# ── ESI Prediction ─────────────────────────────────────────────
-@app.post("/api/predict/esi")
-async def predict_esi(request: ESIPredictionRequest):
-    """Predict ESI triage level for a patient."""
+# ─── Predict: ESI ────────────────────────────────────────────────────────
+
+@app.post("/api/predict/esi", response_model=ESIResponse)
+async def predict_esi(request: ESIRequest):
+    start = time.time()
     try:
-        features = ESIFeatures.from_patient_input(request.patient)
-        prediction = esi_predictor.predict(features)
-
-        # Augment with RAG context if requested
-        rag_sources = []
-        if request.use_rag_context:
-            query = f"ESI classification for {request.patient.chief_complaint} age {request.patient.age}"
-            rag_result = rag_pipeline.query(query, session_id="esi_prediction", top_k=3)
-            prediction["reasoning"].extend([
-                f"According to clinical guidelines: {rag_result.answer[:200]}"
-            ])
-            rag_sources = rag_result.sources
-
-        esi_predictor.total_predictions += 1
-
-        return {
-            "esi_prediction": prediction,
-            "rag_sources": rag_sources,
-            "features_extracted": {
-                "age": features.age,
-                "hr": features.hr,
-                "spo2": features.spo2,
-                "rr": features.rr,
-                "mental_status": features.mental_status,
-                "estimated_resources": features.resource_count_estimate,
+        predictor = get_esi()
+        result = predictor.predict(
+            age=request.age,
+            chief_complaint=request.chief_complaint,
+            vital_signs={
+                "bp_systolic": request.bp_systolic,
+                "bp_diastolic": request.bp_diastolic,
+                "hr": request.hr,
+                "rr": request.rr,
+                "temp": request.temp,
+                "spo2": request.spo2,
             },
-            "timestamp": datetime.now().isoformat(),
-        }
-    except Exception as e:
-        logger.error(f"ESI prediction error: {e}")
-        raise HTTPException(500, f"Prediction failed: {str(e)}")
+            medical_history=request.medical_history,
+            presenting_symptoms=request.presenting_symptoms,
+        )
+        return ESIResponse(
+            esi_level=result.get("esi_level", 3),
+            confidence=float(result.get("confidence", 0.0)),
+            reasoning=result.get("reasoning", ""),
+            recommended_wait_time=result.get("recommended_wait_time", "30-60 minutes"),
+            red_flags=result.get("red_flags", []),
+            protocol=result.get("protocol", ""),
+            latency_ms=round((time.time() - start) * 1000, 1),
+        )
+    except Exception as exc:
+        logger.error(f"ESI prediction error: {exc}")
+        return ESIResponse(
+            esi_level=3, confidence=0.0,
+            reasoning=f"Error: {str(exc)}",
+            recommended_wait_time="Consult clinical staff",
+            red_flags=[],
+            protocol="Unable to determine",
+            latency_ms=round((time.time() - start) * 1000, 1),
+        )
 
 
-# ── Deterioration Prediction ──────────────────────────────────
-@app.post("/api/predict/deterioration")
+# ─── Predict: Deterioration ──────────────────────────────────────────────
+
+@app.post("/api/predict/deterioration", response_model=DeteriorationResponse)
 async def predict_deterioration(request: DeteriorationRequest):
-    """Predict patient deterioration risk."""
+    start = time.time()
     try:
-        vitals = {
-            "heart_rate": request.vital_signs.heart_rate,
-            "blood_pressure_systolic": request.vital_signs.blood_pressure_systolic,
-            "blood_pressure_diastolic": request.vital_signs.blood_pressure_diastolic,
-            "spo2": request.vital_signs.spo2,
-            "respiratory_rate": request.vital_signs.respiratory_rate,
-            "temperature": request.vital_signs.temperature,
-            "gcs": request.vital_signs.gcs,
-        }
-        result = deterioration_predictor.predict(
-            patient_id=request.patient_id,
-            vital_signs=vitals,
-            current_esi=request.current_esi,
-            time_in_ed_minutes=request.time_in_ed_minutes,
+        predictor = get_deterioration()
+        result = predictor.predict(
+            age=request.age,
+            vital_signs={
+                "bp_systolic": request.bp_systolic,
+                "bp_diastolic": request.bp_diastolic,
+                "hr": request.hr,
+                "rr": request.rr,
+                "temp": request.temp,
+                "spo2": request.spo2,
+                "gcs": request.gcs,
+            },
+            medical_history=request.medical_history,
+            presenting_symptoms=request.presenting_symptoms,
+            current_medications=request.current_medications,
+        )
+        return DeteriorationResponse(
+            risk_score=float(result.get("risk_score", 0.0)),
+            risk_level=result.get("risk_level", "LOW"),
+            qsofa_score=int(result.get("qsofa_score", 0)),
+            deterioration_probability=float(result.get("deterioration_probability", 0.0)),
+            warning_signs=result.get("warning_signs", []),
+            monitoring_recommendations=result.get("monitoring_recommendations", []),
+            time_window=result.get("time_window", "Stable - routine monitoring"),
+            confidence=float(result.get("confidence", 0.0)),
+            latency_ms=round((time.time() - start) * 1000, 1),
+        )
+    except Exception as exc:
+        logger.error(f"Deterioration prediction error: {exc}")
+        return DeteriorationResponse(
+            risk_score=0.0, risk_level="UNKNOWN", qsofa_score=0,
+            deterioration_probability=0.0, warning_signs=[],
+            monitoring_recommendations=["Consult clinical staff immediately"],
+            time_window="Unable to determine",
+            confidence=0.0,
+            latency_ms=round((time.time() - start) * 1000, 1),
+        )
+
+
+# ─── Predict: Wait Time ──────────────────────────────────────────────────
+
+@app.post("/api/predict/wait-time", response_model=WaitTimeResponse)
+async def predict_wait_time(request: WaitTimeRequest):
+    start = time.time()
+    try:
+        predictor = get_wait_time()
+        result = predictor.predict(
+            esi_level=request.esi_level,
+            hospital_load=request.hospital_load,
+            department=request.department,
+            day_of_week=request.day_of_week,
+            hour_of_day=request.hour_of_day,
+            current_queue_length=request.current_queue_length,
+            available_doctors=request.available_doctors,
+            patient_age=request.patient_age,
             chief_complaint=request.chief_complaint,
         )
-        return result
-    except Exception as e:
-        logger.error(f"Deterioration prediction error: {e}")
-        raise HTTPException(500, f"Prediction failed: {str(e)}")
-
-
-# ── Wait Time Prediction ───────────────────────────────────────
-@app.post("/api/predict/wait-time")
-async def predict_wait_time(request: WaitTimeRequest):
-    """Predict patient wait time."""
-    try:
-        patient_data = {
-            "age": request.patient.age,
-            "arrival_mode": request.patient.arrival_mode,
-            "esi_level": 3,  # Would come from ESI prediction
-        }
-        ed_state = {
-            "current_ed_volume": request.current_ed_volume,
-            "staff_on_duty": request.staff_on_duty,
-            "available_beds": request.available_beds,
-            "resources_busy": request.resources_busy,
-        }
-        result = wait_time_predictor.predict(patient_data, ed_state)
-        return result
-    except Exception as e:
-        logger.error(f"Wait time prediction error: {e}")
-        raise HTTPException(500, f"Prediction failed: {str(e)}")
-
-
-# ── Full Triage Prediction ────────────────────────────────────
-@app.post("/api/predict/triage")
-async def full_triage_prediction(request: ESIPredictionRequest):
-    """Complete triage prediction: ESI + Deterioration + Wait Time."""
-    try:
-        t0 = time.time()
-
-        # 1. ESI Prediction
-        features = ESIFeatures.from_patient_input(request.patient)
-        esi_result = esi_predictor.predict(features)
-
-        # 2. Deterioration Prediction
-        vitals = {
-            "heart_rate": request.patient.vital_signs.heart_rate,
-            "blood_pressure_systolic": request.patient.vital_signs.blood_pressure_systolic,
-            "spo2": request.patient.vital_signs.spo2,
-            "respiratory_rate": request.patient.vital_signs.respiratory_rate,
-            "temperature": request.patient.vital_signs.temperature,
-            "gcs": request.patient.vital_signs.gcs,
-        }
-        deterioration_result = deterioration_predictor.predict(
-            patient_id="current",
-            vital_signs=vitals,
-            current_esi=esi_result["level"],
-            time_in_ed_minutes=0,
-            chief_complaint=request.patient.chief_complaint,
+        return WaitTimeResponse(
+            predicted_wait_minutes=int(result.get("predicted_wait_minutes", 30)),
+            confidence_interval_lower=int(result.get("ci_lower", 15)),
+            confidence_interval_upper=int(result.get("ci_upper", 60)),
+            factors=result.get("factors", []),
+            recommendation=result.get("recommendation", "Please remain in waiting area"),
+            confidence=float(result.get("confidence", 0.0)),
+            latency_ms=round((time.time() - start) * 1000, 1),
+        )
+    except Exception as exc:
+        logger.error(f"Wait time prediction error: {exc}")
+        return WaitTimeResponse(
+            predicted_wait_minutes=30,
+            confidence_interval_lower=15,
+            confidence_interval_upper=60,
+            factors=["Unable to calculate factors"],
+            recommendation="Please consult nursing staff for current wait times",
+            confidence=0.0,
+            latency_ms=round((time.time() - start) * 1000, 1),
         )
 
-        # 3. Wait Time Prediction
-        wait_result = wait_time_predictor.predict(
-            {"age": request.patient.age, "arrival_mode": request.patient.arrival_mode, "esi_level": esi_result["level"]},
-            {"current_ed_volume": 15, "staff_on_duty": 6, "available_beds": 5, "resources_busy": {"CT": 1, "XRay": 1}},
+
+# ─── Predict: Full Triage ────────────────────────────────────────────────
+
+@app.post("/api/predict/triage", response_model=TriageResponse)
+async def predict_triage(request: TriageRequest):
+    start = time.time()
+    try:
+        esi_result = await predict_esi(request)
+        deter_result = await predict_deterioration(request)
+        wait_result = await predict_wait_time(request)
+        return TriageResponse(
+            esi=esi_result,
+            deterioration=deter_result,
+            wait_time=wait_result,
+            overall_priority=_compute_priority(esi_result, deter_result),
+            latency_ms=round((time.time() - start) * 1000, 1),
         )
-
-        # 4. RAG augmentation
-        rag_sources = []
-        if request.use_rag_context:
-            try:
-                rag_result = rag_pipeline.query(
-                    f"Clinical guidelines for {request.patient.chief_complaint} ESI level {esi_result['level']}",
-                    session_id="triage_full",
-                    top_k=3,
-                )
-                rag_sources = rag_result.sources
-            except Exception:
-                pass
-
-        latency = (time.time() - t0) * 1000
-
-        return {
-            "esi_prediction": esi_result,
-            "deterioration_risk": deterioration_result,
-            "wait_time": wait_result,
-            "rag_sources": rag_sources,
-            "processing_latency_ms": round(latency, 1),
-            "timestamp": datetime.now().isoformat(),
-        }
-    except Exception as e:
-        logger.error(f"Full triage prediction error: {e}")
-        raise HTTPException(500, f"Prediction failed: {str(e)}")
+    except Exception as exc:
+        logger.error(f"Full triage error: {exc}")
+        raise
 
 
-# ── Document Search ────────────────────────────────────────────
+def _compute_priority(esi: ESIResponse, deter: DeteriorationResponse) -> str:
+    if esi.esi_level == 1 or deter.risk_level in ("HIGH", "CRITICAL"):
+        return "IMMEDIATE"
+    if esi.esi_level == 2 or deter.risk_level == "MODERATE":
+        return "URGENT"
+    if esi.esi_level == 3:
+        return "SEMI-URGENT"
+    return "NON-URGENT"
+
+
+# ─── Search ───────────────────────────────────────────────────────────────
+
 @app.post("/api/search", response_model=SearchResponse)
 async def search_documents(request: SearchRequest):
-    """Search clinical documents using RAG pipeline."""
+    start = time.time()
     try:
-        result = rag_pipeline.query(
-            user_query=request.query,
-            session_id=f"search_{uuid.uuid4().hex[:8]}",
-            top_k=request.top_k,
-            use_hybrid=request.use_hybrid,
-            use_reranking=request.use_reranking,
+        pipeline = get_rag()
+        results = pipeline.search(
+            query=request.query,
+            filters={},
+            top_k=request.top_k or 5,
         )
+        items = [
+            SearchResult(
+                document=r.get("source", ""),
+                page=r.get("page"),
+                excerpt=r.get("text", "")[:500],
+                score=float(r.get("rerank_score", r.get("score", 0.0))),
+            )
+            for r in results[: request.top_k or 5]
+        ]
         return SearchResponse(
             query=request.query,
-            results=[
-                {"chunk_id": s.get("source", ""), "text": s.get("text_preview", ""),
-                 "metadata": {"source": s.get("source"), "page": s.get("page"), "score": s.get("score")},
-                 "score": s.get("score", 0)}
-                for s in result.sources
-            ],
-            total_results=len(result.sources),
-            latency_ms=result.latency_ms,
+            results=items,
+            total_results=len(items),
+            latency_ms=round((time.time() - start) * 1000, 1),
         )
-    except Exception as e:
-        logger.error(f"Search error: {e}")
-        raise HTTPException(500, f"Search failed: {str(e)}")
+    except Exception as exc:
+        logger.error(f"Search error: {exc}")
+        return SearchResponse(
+            query=request.query, results=[], total_results=0,
+            latency_ms=round((time.time() - start) * 1000, 1),
+        )
 
 
-# ── Document Ingestion ────────────────────────────────────────
-@app.post("/api/ingest")
+# ─── Ingest ───────────────────────────────────────────────────────────────
+
+@app.post("/api/ingest", response_model=IngestResponse)
 async def ingest_documents():
-    """Process and ingest all documents into vector store."""
-    from app.services.document_processor import DocumentProcessor
-    from pathlib import Path
+    start = time.time()
     try:
-        docs_dir = Path(__file__).resolve().parent.parent.parent / "data"
-        processor = DocumentProcessor(str(docs_dir))
-        documents = processor.process_all_documents()
-        all_chunks = []
-        for doc in documents:
-            for chunk in doc.chunks:
-                all_chunks.append({
-                    "chunk_id": chunk.chunk_id,
-                    "text": chunk.text,
-                    "metadata": {
-                        "source": doc.filename, "title": doc.title,
-                        "file_type": doc.metadata.get("file_type", "unknown"),
-                        "page": chunk.page_number, "section": chunk.section,
-                        "chunk_id": chunk.chunk_id, "text": chunk.text,
-                    },
-                })
-        if all_chunks:
-            vector_store.initialize()
-            vector_store.add_documents(all_chunks)
-        return {"status": "complete", "documents_processed": len(documents), "total_chunks": len(all_chunks)}
-    except Exception as e:
-        logger.error(f"Ingestion error: {e}")
-        raise HTTPException(500, f"Ingestion failed: {str(e)}")
+        pipeline = get_rag()
+        result = pipeline.ingest_documents()
+        return IngestResponse(
+            documents_processed=int(result.get("documents_processed", 0)),
+            chunks_created=int(result.get("chunks_created", 0)),
+            status=result.get("status", "completed"),
+            message=result.get("message", "Documents ingested successfully"),
+            latency_ms=round((time.time() - start) * 1000, 1),
+        )
+    except Exception as exc:
+        logger.error(f"Ingest error: {exc}")
+        return IngestResponse(
+            documents_processed=0, chunks_created=0,
+            status="error",
+            message=f"Ingestion failed: {str(exc)}",
+            latency_ms=round((time.time() - start) * 1000, 1),
+        )
 
 
-# ── Session Management ────────────────────────────────────────
-@app.get("/api/sessions/{session_id}/history")
-async def get_session_history(session_id: str):
-    session = conversation_memory.get_or_create_session(session_id)
-    return {
-        "session_id": session_id,
-        "messages": [{"role": m.role, "content": m.content[:200], "timestamp": m.timestamp}
-                     for m in session.get_recent_messages(20)],
-    }
+# ─── Frontend ─────────────────────────────────────────────────────────────
+
+@app.get("/")
+async def serve_frontend():
+    webapp_path = os.path.join(os.path.dirname(__file__), "..", "..", "webapp", "public", "index.html")
+    if os.path.exists(webapp_path):
+        return FileResponse(webapp_path)
+    return JSONResponse({"message": "ED Triage Assist API running"}, status_code=200)
 
 
-@app.delete("/api/sessions/{session_id}")
-async def clear_session(session_id: str):
-    if session_id in conversation_memory.sessions:
-        del conversation_memory.sessions[session_id]
-    return {"status": "cleared", "session_id": session_id}
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app.api.main:app", host=settings.api_host, port=settings.api_port, reload=True)
+webapp_dir = os.path.join(os.path.dirname(__file__), "..", "..", "webapp", "public")
+if os.path.isdir(webapp_dir):
+    app.mount("/static", StaticFiles(directory=webapp_dir), name="static")
