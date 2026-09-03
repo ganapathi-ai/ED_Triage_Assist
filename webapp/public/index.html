@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ED Triage Assist — AI-Powered RAG Platform</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        :root {
+            --navy: #1A3C5E; --sky: #0EA5E9; --emerald: #10B981;
+            --amber: #F59E0B; --red: #EF4444; --dark: #0F172A;
+            --light: #F8FAFC; --muted: #64748B; --border: rgba(255,255,255,0.08);
+            --glass-bg: rgba(15, 23, 42, 0.65);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Inter', system-ui, sans-serif; background: #0F172A; color: #F8FAFC; }
+        #canvas-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; }
+        canvas { display: block; }
+        .glass { background: var(--glass-bg); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid var(--glass-border); border-radius: 16px; box-shadow: var(--glass-shadow); }
+
+        /* Loading Screen */
+        #loading { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(135deg, #0F172A 0%, #1A3C5E 50%, #0EA5E9 100%); transition: opacity 0.8s ease, visibility 0.8s ease; }
+        #loading.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+        #loading h1 { font-size: 2.5rem; font-weight: 800; background: linear-gradient(135deg, #0EA5E9, #10B981); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 1rem; }
+        #loading p { color: var(--muted); font-size: 0.95rem; margin-bottom: 2rem; }
+        .loader-ring { width: 60px; height: 60px; border: 3px solid rgba(14, 165, 233, 0.2); border-top-color: #0EA5E9; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Top Navigation */
+        #top-nav { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 4px; padding: 6px; }
+        .nav-btn { padding: 10px 20px; border: none; border-radius: 12px; background: transparent; color: var(--muted); font-family: 'Inter', sans-serif; font-size: 0.82rem; font-weight: 500; cursor: pointer; transition: all 0.3s ease; white-space: nowrap; }
+        .nav-btn:hover { color: #F8FAFC; background: rgba(255,255,255,0.05); }
+        .nav-btn.active { background: rgba(14, 165, 233, 0.15); color: #0EA5E9; box-shadow: 0 0 20px rgba(14, 165, 233, 0.15); }
+
+        /* Time Display */
+        #time-display { position: fixed; top: 20px; right: 20px; z-index: 100; padding: 8px 16px; font-size: 0.8rem; font-weight: 500; color: var(--muted); }
+
+        /* Sidebar Toggle */
+        #sidebar-toggle { position: fixed; top: 20px; left: 20px; z-index: 200; width: 44px; height: 44px; border-radius: 12px; border: none; background: var(--glass-bg); backdrop-filter: blur(24px); color: var(--muted); font-size: 1.2rem; cursor: pointer; transition: all 0.3s; display: flex; align-items: center; justify-content: center; }
+        #sidebar-toggle:hover { color: var(--sky); background: rgba(14,165,233,0.15); }
+
+        /* Sidebar */
+        #sidebar { position: fixed; top: 0; left: -420px; width: 400px; height: 100vh; z-index: 150; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(40px); border-right: 1px solid var(--glass-border); transition: left 0.4s cubic-bezier(0.4, 0, 0.2, 1); display: flex; flex-direction: column; }
+        #sidebar.open { left: 0; }
+        #sidebar-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 140; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+        #sidebar-overlay.active { opacity: 1; pointer-events: all; }
+        .sidebar-header { padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+        .sidebar-header h2 { font-size: 1.1rem; font-weight: 700; }
+        .sidebar-close { background: none; border: none; color: var(--muted); font-size: 1.5rem; cursor: pointer; padding: 4px 8px; border-radius: 8px; }
+        .sidebar-close:hover { color: var(--light); background: rgba(255,255,255,0.05); }
+        .sidebar-content { flex: 1; overflow-y: auto; padding: 20px 24px; }
+        .sidebar-content::-webkit-scrollbar { width: 4px; }
+        .sidebar-content::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 2px; }
+
+        /* Chat Messages */
+        .chat-messages { display: flex; flex-direction: column; gap: 16px; padding-bottom: 20px; }
+        .chat-msg { max-width: 100%; }
+        .chat-msg.user { align-self: flex-end; }
+        .chat-msg.assistant { align-self: flex-start; }
+        .chat-bubble { padding: 12px 16px; border-radius: 14px; font-size: 0.85rem; line-height: 1.6; }
+        .chat-msg.user .chat-bubble { background: rgba(14, 165, 233, 0.2); border: 1px solid rgba(14, 165, 233, 0.3); border-bottom-right-radius: 4px; }
+        .chat-msg.assistant .chat-bubble { background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+        .chat-bubble p { margin-bottom: 8px; }
+        .chat-bubble p:last-child { margin-bottom: 0; }
+        .source-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 0.7rem; font-weight: 600; background: rgba(14, 165, 233, 0.15); color: #7DD3FC; margin: 2px; }
+        .confidence-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
+        .confidence-high { background: rgba(16,185,129,0.15); color: #6EE7B7; }
+        .confidence-med { background: rgba(245,158,11,0.15); color: #FCD34D; }
+        .confidence-low { background: rgba(239,68,68,0.15); color: #FCA5A5; }
+        .latency-tag { font-size: 0.65rem; color: var(--muted); margin-top: 4px; }
+
+        /* Chat Input */
+        .chat-input-area { padding: 16px 24px; border-top: 1px solid var(--border); }
+        .chat-input-row { display: flex; gap: 8px; }
+        #chat-input { flex: 1; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--border); background: rgba(255,255,255,0.05); color: var(--light); font-family: 'Inter', sans-serif; font-size: 0.85rem; outline: none; transition: border-color 0.3s; }
+        #chat-input:focus { border-color: var(--sky); }
+        #chat-input::placeholder { color: var(--muted); }
+        #chat-send { padding: 12px 20px; border-radius: 12px; border: none; background: linear-gradient(135deg, var(--sky), var(--emerald)); color: white; font-weight: 600; cursor: pointer; transition: all 0.3s; font-size: 0.85rem; }
+        #chat-send:hover { transform: scale(1.05); }
+        #chat-send:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .quick-prompts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+        .quick-prompt { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--muted); font-size: 0.75rem; cursor: pointer; transition: all 0.2s; }
+        .quick-prompt:hover { border-color: var(--sky); color: var(--sky); background: rgba(14,165,233,0.1); }
+
+        /* ESI Triage Panel */
+        .esi-panel { padding: 16px 0; }
+        .esi-form-group { margin-bottom: 14px; }
+        .esi-form-group label { display: block; font-size: 0.75rem; font-weight: 600; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .esi-form-group input, .esi-form-group select, .esi-form-group textarea { width: 100%; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border); background: rgba(255,255,255,0.05); color: var(--light); font-family: 'Inter', sans-serif; font-size: 0.85rem; outline: none; transition: border-color 0.3s; }
+        .esi-form-group input:focus, .esi-form-group select:focus, .esi-form-group textarea:focus { border-color: var(--sky); }
+        .esi-form-group textarea { resize: vertical; min-height: 60px; }
+        .esi-vitals-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .esi-btn { width: 100%; padding: 14px; border-radius: 12px; border: none; background: linear-gradient(135deg, var(--sky), var(--emerald)); color: white; font-weight: 700; font-size: 0.9rem; cursor: pointer; transition: all 0.3s; margin-top: 8px; }
+        .esi-btn:hover { transform: scale(1.02); box-shadow: 0 4px 20px rgba(14,165,233,0.3); }
+        .esi-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .esi-result { margin-top: 16px; padding: 16px; border-radius: 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); }
+        .esi-result h4 { font-size: 0.8rem; font-weight: 600; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .esi-level-display { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+        .esi-level-badge { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; font-weight: 800; }
+        .esi-1 { background: rgba(239,68,68,0.2); color: #FCA5A5; }
+        .esi-2 { background: rgba(245,158,11,0.2); color: #FCD34D; }
+        .esi-3 { background: rgba(234,179,8,0.2); color: #FDE047; }
+        .esi-4 { background: rgba(16,185,129,0.2); color: #6EE7B7; }
+        .esi-5 { background: rgba(14,165,233,0.2); color: #7DD3FC; }
+        .esi-level-info { font-size: 0.85rem; }
+        .esi-level-info .level-name { font-weight: 700; }
+        .esi-level-info .level-desc { color: var(--muted); font-size: 0.75rem; }
+
+        /* Doc Search */
+        .doc-search-results { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+        .doc-result-card { padding: 12px; border-radius: 10px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); cursor: pointer; transition: all 0.2s; }
+        .doc-result-card:hover { border-color: var(--sky); background: rgba(14,165,233,0.05); }
+        .doc-result-source { font-size: 0.7rem; font-weight: 600; color: var(--sky); text-transform: uppercase; letter-spacing: 0.5px; }
+        .doc-result-text { font-size: 0.8rem; color: #94A3B8; margin-top: 4px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+        .doc-result-meta { display: flex; gap: 8px; margin-top: 6px; }
+        .doc-result-meta span { font-size: 0.65rem; color: var(--muted); }
+
+        /* Stats Panel */
+        #stats-panel { position: fixed; top: 90px; left: 20px; width: 260px; z-index: 100; padding: 20px; opacity: 0; transform: translateX(-20px); }
+        .stat-title { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); margin-bottom: 14px; }
+        .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+        .stat-row:last-child { border-bottom: none; }
+        .stat-label { font-size: 0.78rem; color: #94A3B8; }
+        .stat-value { font-size: 0.85rem; font-weight: 700; }
+        .stat-value.good { color: var(--emerald); }
+        .stat-value.warn { color: var(--amber); }
+        .stat-value.bad { color: var(--red); }
+        .stat-value.info { color: var(--sky); }
+
+        /* Right Info Panel */
+        #info-panel { position: fixed; top: 90px; right: 20px; width: 300px; z-index: 100; padding: 20px; opacity: 0; transform: translateX(20px); }
+        .info-patient-id { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--sky); margin-bottom: 4px; }
+        .info-patient-name { font-size: 1.2rem; font-weight: 700; margin-bottom: 12px; }
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+        .info-vital { padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 10px; border: 1px solid var(--border); }
+        .info-vital-label { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+        .info-vital-value { font-size: 1rem; font-weight: 700; margin-top: 2px; }
+        .info-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+        .info-section-title { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 6px; }
+        .info-tag { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; margin: 2px 4px 2px 0; }
+
+        /* Bottom Bar */
+        #bottom-bar { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 12px; align-items: center; padding: 10px 16px; }
+        .bottom-stat { text-align: center; padding: 0 16px; border-right: 1px solid var(--border); }
+        .bottom-stat:last-child { border-right: none; }
+        .bottom-stat-val { font-size: 1.3rem; font-weight: 800; background: linear-gradient(135deg, #0EA5E9, #10B981); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .bottom-stat-label { font-size: 0.65rem; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-top: 2px; }
+
+        /* ESI Legend */
+        #esi-legend { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; gap: 12px; padding: 10px 16px; }
+        .esi-badge { display: flex; align-items: center; gap: 6px; font-size: 0.7rem; font-weight: 600; }
+        .esi-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+        /* Alert Toast */
+        #alert-toast { position: fixed; top: 90px; left: 50%; transform: translateX(-50%) translateY(-100px); z-index: 200; padding: 14px 24px; display: flex; align-items: center; gap: 12px; transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        #alert-toast.show { transform: translateX(-50%) translateY(0); }
+        .alert-icon { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1rem; font-weight: 800; }
+        .alert-text { font-size: 0.82rem; font-weight: 500; }
+
+        /* RAG Metrics Display */
+        #rag-metrics { position: fixed; bottom: 20px; right: 20px; z-index: 100; padding: 12px 16px; font-size: 0.7rem; }
+        .metric-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+        .metric-label { color: var(--muted); }
+        .metric-value { color: var(--emerald); font-weight: 600; }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            #stats-panel { width: 200px; left: 10px; padding: 14px; }
+            #info-panel { width: 240px; right: 10px; padding: 14px; }
+            #sidebar { width: 100%; left: -420px; }
+            #sidebar.open { left: 0; }
+            .nav-btn { padding: 8px 14px; font-size: 0.72rem; }
+        }
+        @media (max-width: 768px) {
+            #stats-panel { display: none; }
+            #info-panel { width: 220px; right: 8px; padding: 12px; }
+            #top-nav { flex-wrap: wrap; max-width: 95vw; }
+        }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 2px; }
+    </style>
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loading">
+        <h1>ED Triage Assist</h1>
+        <p>AI-Powered RAG Platform — Initializing...</p>
+        <div class="loader-ring"></div>
+    </div>
+
+    <!-- 3D Canvas -->
+    <div id="canvas-container"></div>
+
+    <!-- Time Display -->
+    <div id="time-display" class="glass"></div>
+
+    <!-- Sidebar Toggle -->
+    <button id="sidebar-toggle" title="AI Assistant">&#x1F4AC;</button>
+
+    <!-- Sidebar Overlay -->
+    <div id="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+    <!-- Sidebar -->
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h2 id="sidebar-title">AI Assistant</h2>
+            <button class="sidebar-close" onclick="toggleSidebar()">&times;</button>
+        </div>
+        <div class="sidebar-content" id="sidebar-content">
+            <!-- Dynamic content based on mode -->
+        </div>
+    </div>
+
+    <!-- Top Navigation -->
+    <nav id="top-nav" class="glass">
+        <button class="nav-btn active" data-view="floor">Floor Plan</button>
+        <button class="nav-btn" data-view="esi">ESI Heatmap</button>
+        <button class="nav-btn" data-view="waittime">Wait Times</button>
+        <button class="nav-btn" data-view="staff">Staff View</button>
+        <button class="nav-btn" data-view="resources">Resources</button>
+    </nav>
+
+    <!-- Left Stats Panel -->
+    <div id="stats-panel" class="glass">
+        <div class="stat-title">Department Overview</div>
+        <div id="stats-content"></div>
+    </div>
+
+    <!-- Right Patient Info Panel -->
+    <div id="info-panel" class="glass" style="display:none;">
+        <div class="info-patient-id" id="info-id"></div>
+        <div class="info-patient-name" id="info-name"></div>
+        <div class="info-grid" id="info-vitals"></div>
+        <div class="info-section">
+            <div class="info-section-title">Chief Complaint</div>
+            <div id="info-complaint" style="font-size:0.8rem;"></div>
+        </div>
+        <div class="info-section">
+            <div class="info-section-title">AI Recommendation</div>
+            <div id="info-recommendation"></div>
+        </div>
+        <div class="info-section">
+            <div class="info-section-title">Allergies & Alerts</div>
+            <div id="info-allergies"></div>
+        </div>
+    </div>
+
+    <!-- ESI Legend -->
+    <div id="esi-legend" class="glass">
+        <div class="esi-badge"><div class="esi-dot" style="background:#EF4444;"></div>ESI 1 — Resuscitation</div>
+        <div class="esi-badge"><div class="esi-dot" style="background:#F59E0B;"></div>ESI 2 — Emergent</div>
+        <div class="esi-badge"><div class="esi-dot" style="background:#EAB308;"></div>ESI 3 — Urgent</div>
+        <div class="esi-badge"><div class="esi-dot" style="background:#10B981;"></div>ESI 4 — Less Urgent</div>
+        <div class="esi-badge"><div class="esi-dot" style="background:#0EA5E9;"></div>ESI 5 — Non-Urgent</div>
+    </div>
+
+    <!-- Bottom Bar -->
+    <div id="bottom-bar" class="glass">
+        <div class="bottom-stat"><div class="bottom-stat-val" id="bs-patients">0</div><div class="bottom-stat-label">In Dept.</div></div>
+        <div class="bottom-stat"><div class="bottom-stat-val" id="bs-wait">0m</div><div class="bottom-stat-label">Avg Wait</div></div>
+        <div class="bottom-stat"><div class="bottom-stat-val" id="bs-lwbs">0</div><div class="bottom-stat-label">LWBS</div></div>
+        <div class="bottom-stat"><div class="bottom-stat-val" id="bs-esi">0%</div><div class="bottom-stat-label">ESI Accuracy</div></div>
+    </div>
+
+    <!-- RAG Metrics -->
+    <div id="rag-metrics" class="glass" style="display:none;">
+        <div class="metric-row"><span class="metric-label">Last Query</span><span class="metric-value" id="m-latency">—</span></div>
+        <div class="metric-row"><span class="metric-label">Confidence</span><span class="metric-value" id="m-confidence">—</span></div>
+        <div class="metric-row"><span class="metric-label">Sources</span><span class="metric-value" id="m-sources">—</span></div>
+    </div>
+
+    <!-- Alert Toast -->
+    <div id="alert-toast" class="glass">
+        <div class="alert-icon" id="alert-icon">!</div>
+        <div class="alert-text" id="alert-text"></div>
+    </div>
+
+<script>
+// ╔══════════════════════════════════════════════════════════════╗
+// ║   ED TRIAGE ASSIST — AI-Powered RAG Platform                ║
+// ║   Three.js 3D Dashboard + RAG Chat + ESI Assistant          ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+// ── API Configuration ────────────────────────────────────────
+const API_BASE = 'http://localhost:8000';
+let sessionId = 'session_' + Date.now();
+let sidebarMode = 'chat'; // 'chat' | 'esi' | 'search'
+
+// ── Global State ──────────────────────────────────────────────
+const STATE = { currentView: 'floor', selectedPatient: null, time: new Date(), cameraTarget: new THREE.Vector3(0, 0, 0), hoveredObject: null };
+const COLORS = { navy: 0x1A3C5E, sky: 0x0EA5E9, emerald: 0x10B981, amber: 0xF59E0B, red: 0xEF4444, dark: 0x0F172A, light: 0xF8FAFC, muted: 0x64748B, glass: 0x1E293B, esi1: 0xEF4444, esi2: 0xF59E0B, esi3: 0xEAB308, esi4: 0x10B981, esi5: 0x0EA5E9, floor: 0x1E293B, wall: 0x334155, staff: 0x8B5CF6 };
+const ESI_COLORS = { 1: COLORS.esi1, 2: COLORS.esi2, 3: COLORS.esi3, 4: COLORS.esi4, 5: COLORS.esi5 };
+const ESI_LABELS = { 1: 'Resuscitation', 2: 'Emergent', 3: 'Urgent', 4: 'Less Urgent', 5: 'Non-Urgent' };
+const ESI_DESCRIPTIONS = {
+    1: 'Requires immediate lifesaving intervention (airway, breathing, circulation)',
+    2: 'High-risk situation, confused/lethargic, or severe pain/distress',
+    3: 'Requires two or more resources for management',
+    4: 'Requires one resource for management',
+    5: 'Requires no resources beyond physical exam'
+};
+
+// ── Mock Data ──────────────────────────────────────────────────
+const PATIENT_DATA = [
+    { id: 'P-1001', name: 'Margaret Chen', age: 67, esi: 1, complaint: 'Severe chest pain, diaphoresis', vitals: { HR: 118, BP: '88/52', SpO2: 91, RR: 28, Temp: 37.8 }, wait: 3, risk: 94, position: [-8, 0, -6], allergies: ['Penicillin', 'Sulfa drugs'], aiRec: 'Immediate CT Angiography, cath lab activation' },
+    { id: 'P-1002', name: 'James Okonkwo', age: 45, esi: 2, complaint: 'Sudden severe headache, neck stiffness', vitals: { HR: 102, BP: '195/110', SpO2: 97, RR: 22, Temp: 38.2 }, wait: 12, risk: 87, position: [-4, 0, -6], allergies: ['None known'], aiRec: 'Urgent CT Head non-contrast, LP if CT negative' },
+    { id: 'P-1003', name: 'Sofia Rodriguez', age: 34, esi: 2, complaint: 'Abdominal pain, vomiting, RLQ tenderness', vitals: { HR: 96, BP: '130/82', SpO2: 99, RR: 18, Temp: 38.0 }, wait: 18, risk: 72, position: [0, 0, -6], allergies: ['Latex'], aiRec: 'Surgical consult, CT abdomen with contrast' },
+    { id: 'P-1004', name: 'Robert Kim', age: 72, esi: 3, complaint: 'Shortness of breath, productive cough', vitals: { HR: 104, BP: '142/88', SpO2: 93, RR: 24, Temp: 38.5 }, wait: 25, risk: 65, position: [4, 0, -6], allergies: ['Aspirin'], aiRec: 'Chest X-ray, CBC, BMP, blood cultures' },
+    { id: 'P-1005', name: 'Aisha Patel', age: 28, esi: 3, complaint: 'Severe migraine with aura', vitals: { HR: 72, BP: '118/72', SpO2: 99, RR: 14, Temp: 36.9 }, wait: 30, risk: 45, position: [8, 0, -6], allergies: ['None known'], aiRec: 'Neuro exam, CT Head if red flags' },
+    { id: 'P-1006', name: 'Thomas Wright', age: 55, esi: 3, complaint: 'Upper abdominal pain, nausea', vitals: { HR: 88, BP: '148/94', SpO2: 97, RR: 16, Temp: 37.1 }, wait: 35, risk: 52, position: [-8, 0, 0], allergies: ['Codeine'], aiRec: 'ECG, troponin, lipase, abdominal exam' },
+    { id: 'P-1007', name: 'Emma Johansson', age: 19, esi: 4, complaint: 'Ankle sprain, inability to weight-bear', vitals: { HR: 78, BP: '118/72', SpO2: 99, RR: 14, Temp: 36.7 }, wait: 45, risk: 12, position: [-4, 0, 0], allergies: ['None known'], aiRec: 'X-ray ankle/foot, Ottawa Ankle Rules' },
+    { id: 'P-1008', name: 'David Nguyen', age: 41, esi: 4, complaint: 'Laceration to left hand, active bleeding', vitals: { HR: 82, BP: '125/78', SpO2: 99, RR: 16, Temp: 36.8 }, wait: 20, risk: 18, position: [0, 0, 0], allergies: ['Iodine contrast'], aiRec: 'Wound irrigation, suturing, tetanus check' },
+    { id: 'P-1009', name: 'Lisa Thompson', age: 52, esi: 4, complaint: 'Urinary tract symptoms, dysuria', vitals: { HR: 76, BP: '122/76', SpO2: 98, RR: 14, Temp: 37.4 }, wait: 50, risk: 22, position: [4, 0, 0], allergies: ['None known'], aiRec: 'Urinalysis, urine culture, empiric antibiotics' },
+    { id: 'P-1010', name: 'Carlos Mendez', age: 63, esi: 4, complaint: 'Lower back pain, 3 days duration', vitals: { HR: 74, BP: '135/85', SpO2: 98, RR: 14, Temp: 36.9 }, wait: 55, risk: 20, position: [8, 0, 0], allergies: ['None known'], aiRec: 'Spine exam, NSAIDs, physical therapy referral' },
+    { id: 'P-1011', name: 'Yuki Tanaka', age: 7, esi: 3, complaint: 'High fever, rash, decreased oral intake', vitals: { HR: 128, BP: '98/62', SpO2: 97, RR: 28, Temp: 39.4 }, wait: 15, risk: 58, position: [-8, 0, 6], allergies: ['Amoxicillin'], aiRec: 'CBC, blood culture, IV fluids, empiric antibiotics' },
+    { id: 'P-1012', name: 'Fatima Hassan', age: 36, esi: 5, complaint: 'Prescription refill, mild rash', vitals: { HR: 68, BP: '115/72', SpO2: 99, RR: 14, Temp: 36.8 }, wait: 40, risk: 8, position: [-4, 0, 6], allergies: ['None known'], aiRec: 'Topical steroid, follow-up with dermatology' },
+    { id: 'P-1013', name: 'Michael OBrien', age: 58, esi: 5, complaint: 'Follow-up, mild headache', vitals: { HR: 70, BP: '130/80', SpO2: 98, RR: 14, Temp: 36.8 }, wait: 60, risk: 10, position: [0, 0, 6], allergies: ['None known'], aiRec: 'Reassurance, OTC analgesics' },
+    { id: 'P-1014', name: 'Priya Sharma', age: 31, esi: 4, complaint: 'Ear pain, fever', vitals: { HR: 82, BP: '120/76', SpO2: 99, RR: 14, Temp: 37.8 }, wait: 38, risk: 25, position: [4, 0, 6], allergies: ['None known'], aiRec: 'Otoscopic exam, amoxicillin if indicated' },
+    { id: 'P-1015', name: 'Anders Lindqvist', age: 70, esi: 2, complaint: 'Altered mental status, fall', vitals: { HR: 92, BP: '155/90', SpO2: 94, RR: 20, Temp: 37.2 }, wait: 8, risk: 78, position: [8, 0, 6], allergies: ['Warfarin'], aiRec: 'CT Head, INR, glucose, 2w placement' },
+];
+
+const STAFF_DATA = [
+    { name: 'Dr. Sarah Mitchell', role: 'Attending Physician', x: -2, z: -3, color: COLORS.emerald, experience: '12 yrs' },
+    { name: 'Dr. Raj Kapoor', role: 'Emergency Physician', x: 5, z: -3, color: COLORS.sky, experience: '8 yrs' },
+    { name: 'Nurse Alice Thompson', role: 'Charge Nurse', x: 0, z: -4, color: COLORS.amber, experience: '15 yrs' },
+    { name: 'Nurse Ben Carter', role: 'RN — Triage', x: -6, z: 2, color: COLORS.staff, experience: '5 yrs' },
+    { name: 'Nurse Clara Davis', role: 'RN — Bay 3', x: 3, z: -1, color: COLORS.staff, experience: '3 yrs' },
+    { name: 'Dr. Kenji Watanabe', role: 'Resident', x: 6, z: 2, color: COLORS.emerald, experience: '2 yrs' },
+];
+
+const RESOURCE_DATA = [
+    { name: 'CT Scanner', capacity: 1, used: 1, waitQueue: 3 },
+    { name: 'MRI', capacity: 1, used: 0, waitQueue: 1 },
+    { name: 'X-Ray', capacity: 2, used: 2, waitQueue: 2 },
+    { name: 'Trauma Room 1', capacity: 1, used: 1, waitQueue: 0 },
+    { name: 'Trauma Room 2', capacity: 1, used: 0, waitQueue: 1 },
+    { name: 'ICU Beds', capacity: 4, used: 3, waitQueue: 2 },
+    { name: 'Lab Stations', capacity: 3, used: 2, waitQueue: 4 },
+];
+
+// ═══════════════════════════════════════════════════════════════
+// THREE.JS SCENE
+// ═══════════════════════════════════════════════════════════════
+let scene, camera, renderer, controls, raycaster, mouse;
+let patientMeshes = [], staffMeshes = [], resourceMeshes = [], particleSystem, ambientParticles;
+
+function initScene() {
+    const container = document.getElementById('canvas-container');
+    scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x0F172A, 0.012);
+    scene.background = new THREE.Color(0x0F172A);
+    camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
+    camera.position.set(18, 16, 18);
+    camera.lookAt(0, 0, 0);
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
+    container.appendChild(renderer.domElement);
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.maxPolarAngle = Math.PI / 2.3;
+    controls.minDistance = 8;
+    controls.maxDistance = 40;
+    controls.target.set(0, 0, 0);
+    raycaster = new THREE.Raycaster();
+    mouse = new THREE.Vector2();
+
+    const ambientLight = new THREE.AmbientLight(0x1E293B, 0.6);
+    scene.add(ambientLight);
+    const mainLight = new THREE.DirectionalLight(0xFFFFFF, 0.8);
+    mainLight.position.set(15, 25, 15);
+    mainLight.castShadow = true;
+    mainLight.shadow.mapSize.width = 2048;
+    mainLight.shadow.mapSize.height = 2048;
+    scene.add(mainLight);
+    const skyLight = new THREE.DirectionalLight(0x0EA5E9, 0.15);
+    skyLight.position.set(-10, 15, -10);
+    scene.add(skyLight);
+    const accentLight = new THREE.PointLight(0x10B981, 0.5, 30);
+    accentLight.position.set(0, 8, 0);
+    scene.add(accentLight);
+    const bayPositions = [[-8,5,-6],[-4,5,-6],[0,5,-6],[4,5,-6],[8,5,-6],[-8,5,0],[-4,5,0],[0,5,0],[4,5,0],[8,5,0],[-8,5,6],[-4,5,6],[0,5,6],[4,5,6],[8,5,6]];
+    bayPositions.forEach((pos,i) => { const color = PATIENT_DATA[i] ? ESI_COLORS[PATIENT_DATA[i].esi] : COLORS.sky; const light = new THREE.PointLight(color, 0.12, 6); light.position.set(pos[0], pos[1], pos[2]); scene.add(light); });
+    const gridHelper = new THREE.GridHelper(40, 40, 0x1E3A5F, 0x0F172A);
+    gridHelper.position.y = -0.01;
+    scene.add(gridHelper);
+    const groundGeo = new THREE.PlaneGeometry(40, 40);
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x0F172A, roughness: 0.9, metalness: 0.1 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.02;
+    ground.receiveShadow = true;
+    scene.add(ground);
+}
+
+function buildHospital() {
+    const wallMaterial = new THREE.MeshStandardMaterial({ color: COLORS.wall, roughness: 0.7, metalness: 0.2, transparent: true, opacity: 0.4 });
+    const floorMaterial = new THREE.MeshStandardMaterial({ color: COLORS.floor, roughness: 0.6, metalness: 0.3, transparent: true, opacity: 0.8 });
+    const wallThickness = 0.15, wallHeight = 3, roomW = 18, roomD = 14;
+    function createWall(w, h, d, x, y, z) { const geo = new THREE.BoxGeometry(w, h, d); const mesh = new THREE.Mesh(geo, wallMaterial); mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true; scene.add(mesh); }
+    createWall(roomW, wallHeight, wallThickness, 0, wallHeight/2, -roomD/2);
+    createWall(roomW, wallHeight, wallThickness, 0, wallHeight/2, roomD/2);
+    createWall(wallThickness, wallHeight, roomD, -roomW/2, wallHeight/2, 0);
+    createWall(wallThickness, wallHeight, roomD, roomW/2, wallHeight/2, 0);
+    const corrMat = new THREE.MeshStandardMaterial({ color: 0x0F172A, roughness: 0.8, metalness: 0.1, transparent: true, opacity: 0.5 });
+    const corrGeoH = new THREE.BoxGeometry(roomW - 2, 0.05, 2);
+    const corrH = new THREE.Mesh(corrGeoH, corrMat);
+    corrH.position.set(0, 0.03, 3);
+    scene.add(corrH);
+    const corrGeoV = new THREE.BoxGeometry(2, 0.05, roomD - 2);
+    const corrV1 = new THREE.Mesh(corrGeoV, corrMat);
+    corrV1.position.set(-6, 0.03, 0);
+    scene.add(corrV1);
+    const corrV2 = new THREE.Mesh(corrGeoV, corrMat);
+    corrV2.position.set(6, 0.03, 0);
+    scene.add(corrV2);
+    const glassMat = new THREE.MeshPhysicalMaterial({ color: 0x0EA5E9, roughness: 0.1, metalness: 0.1, transparent: true, opacity: 0.08, transmission: 0.9, thickness: 0.5 });
+    for (let row = 0; row < 3; row++) { for (let col = 0; col < 4; col++) { const x = -7.5 + col * 5.3; const z = -7.5 + row * 6; const dividerGeo = new THREE.BoxGeometry(0.05, 2.5, 4); const divider = new THREE.Mesh(dividerGeo, glassMat); divider.position.set(x + 2.6, 1.25, z); scene.add(divider); } }
+    const triageGeo = new THREE.BoxGeometry(4, 2.5, 2.5);
+    const triageMat = new THREE.MeshStandardMaterial({ color: COLORS.navy, roughness: 0.4, metalness: 0.5, transparent: true, opacity: 0.7 });
+    const triage = new THREE.Mesh(triageGeo, triageMat);
+    triage.position.set(0, 1.25, -8.5);
+    triage.castShadow = true;
+    scene.add(triage);
+    const resPositions = [{ name: 'CT', x: -10, z: 8, w: 3, d: 3 }, { name: 'MRI', x: 10, z: 8, w: 3, d: 3 }, { name: 'XRAY', x: 0, z: 8, w: 5, d: 2.5 }, { name: 'TRAUMA', x: -9, z: -9, w: 4, d: 3 }, { name: 'LAB', x: 9, z: -9, w: 4, d: 3 }];
+    resPositions.forEach(r => {
+        const geo = new THREE.BoxGeometry(r.w, 1.5, r.d);
+        const mat = new THREE.MeshStandardMaterial({ color: 0x1E3A5F, roughness: 0.3, metalness: 0.6, transparent: true, opacity: 0.5 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(r.x, 0.75, r.z);
+        mesh.castShadow = true;
+        mesh.userData = { type: 'resource', name: r.name };
+        scene.add(mesh);
+        resourceMeshes.push(mesh);
+        const lightGeo = new THREE.SphereGeometry(0.2, 16, 16);
+        const lightMat = new THREE.MeshStandardMaterial({ color: COLORS.emerald, emissive: COLORS.emerald, emissiveIntensity: 0.5 });
+        const lightMesh = new THREE.Mesh(lightGeo, lightMat);
+        lightMesh.position.set(r.x, 1.6, r.z);
+        scene.add(lightMesh);
+    });
+}
+
+function createPatientBays() {
+    PATIENT_DATA.forEach((patient, index) => {
+        const esi = patient.esi;
+        const color = ESI_COLORS[esi];
+        const bedGeo = new THREE.BoxGeometry(1.5, 0.3, 1.2);
+        const bedMat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.3, metalness: 0.4, emissive: color, emissiveIntensity: 0.15, transparent: true, opacity: 0.85 });
+        const bed = new THREE.Mesh(bedGeo, bedMat);
+        bed.position.set(patient.position[0], 0.5, patient.position[2]);
+        bed.castShadow = true;
+        bed.receiveShadow = true;
+        bed.userData = { type: 'patient', index: index, patient: patient };
+        scene.add(bed);
+        patientMeshes.push(bed);
+        const ringGeo = new THREE.RingGeometry(0.6, 0.75, 32);
+        const ringMat = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.3, side: THREE.DoubleSide });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.set(patient.position[0], 0.06, patient.position[2]);
+        ring.userData = { type: 'patientGlow', index: index };
+        scene.add(ring);
+        const headGeo = new THREE.SphereGeometry(0.2, 16, 16);
+        const headMat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.2, metalness: 0.5, emissive: color, emissiveIntensity: 0.2 });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.set(patient.position[0], 0.85, patient.position[2] - 0.2);
+        head.castShadow = true;
+        scene.add(head);
+        const pulseGeo = new THREE.SphereGeometry(0.35, 16, 16);
+        const pulseMat = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.08 });
+        const pulse = new THREE.Mesh(pulseGeo, pulseMat);
+        pulse.position.set(patient.position[0], 0.8, patient.position[2]);
+        pulse.userData = { pulse: true, baseOpacity: 0.08 };
+        scene.add(pulse);
+    });
+}
+
+function createStaff() {
+    STAFF_DATA.forEach((staff, i) => {
+        const group = new THREE.Group();
+        const bodyGeo = new THREE.CylinderGeometry(0.2, 0.25, 1.2, 12);
+        const bodyMat = new THREE.MeshStandardMaterial({ color: staff.color, roughness: 0.3, metalness: 0.5, emissive: staff.color, emissiveIntensity: 0.1 });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.position.y = 0.6;
+        body.castShadow = true;
+        group.add(body);
+        const headGeo = new THREE.SphereGeometry(0.2, 12, 12);
+        const headMat = new THREE.MeshStandardMaterial({ color: 0xFBBF24, roughness: 0.3, metalness: 0.4 });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.y = 1.35;
+        head.castShadow = true;
+        group.add(head);
+        const badgeGeo = new THREE.RingGeometry(0.12, 0.18, 16);
+        const badgeMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
+        const badge = new THREE.Mesh(badgeGeo, badgeMat);
+        badge.rotation.x = -Math.PI / 2;
+        badge.position.y = 0.01;
+        group.add(badge);
+        group.position.set(staff.x, 0, staff.z);
+        group.userData = { type: 'staff', index: i, staff: staff, originalPos: { x: staff.x, z: staff.z }, walkAngle: Math.random() * Math.PI * 2, walkSpeed: 0.2 + Math.random() * 0.3, walkRadius: 1 + Math.random() * 2 };
+        scene.add(group);
+        staffMeshes.push(group);
+    });
+}
+
+function createParticles() {
+    const count = 200;
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const esiKeys = Object.keys(ESI_COLORS);
+    for (let i = 0; i < count; i++) {
+        positions[i*3] = (Math.random() - 0.5) * 16;
+        positions[i*3+1] = 0.5 + Math.random() * 3;
+        positions[i*3+2] = (Math.random() - 0.5) * 12;
+        const esi = parseInt(esiKeys[Math.floor(Math.random() * esiKeys.length)]);
+        const col = new THREE.Color(ESI_COLORS[esi]);
+        colors[i*3] = col.r; colors[i*3+1] = col.g; colors[i*3+2] = col.b;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const mat = new THREE.PointsMaterial({ size: 0.08, vertexColors: true, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, sizeAttenuation: true });
+    particleSystem = new THREE.Points(geo, mat);
+    particleSystem.userData = { positions: positions, velocities: [] };
+    for (let i = 0; i < count; i++) { particleSystem.userData.velocities.push({ x: (Math.random()-0.5)*0.01, y: (Math.random()-0.5)*0.005, z: (Math.random()-0.5)*0.01 }); }
+    scene.add(particleSystem);
+}
+
+function createAmbientParticles() {
+    const count = 500;
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) { positions[i*3] = (Math.random()-0.5)*40; positions[i*3+1] = Math.random()*15; positions[i*3+2] = (Math.random()-0.5)*40; }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({ size: 0.04, color: 0x0EA5E9, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, sizeAttenuation: true });
+    const particles = new THREE.Points(geo, mat);
+    particles.userData = { ambient: true };
+    scene.add(particles);
+    return particles;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// VIEW MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+const VIEW_CAMERAS = { floor: { pos: [18, 16, 18], target: [0, 0, 0] }, esi: { pos: [5, 20, 2], target: [0, 0, 0] }, waittime: { pos: [22, 10, 0], target: [0, 0, 0] }, staff: { pos: [12, 8, 12], target: [0, 1, 0] }, resources: { pos: [0, 15, 18], target: [0, 0, 0] } };
+
+function switchView(viewName) {
+    STATE.currentView = viewName;
+    document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.view === viewName));
+    const cam = VIEW_CAMERAS[viewName];
+    if (!cam) return;
+    gsap.to(camera.position, { x: cam.pos[0], y: cam.pos[1], z: cam.pos[2], duration: 1.5, ease: 'power3.inOut' });
+    gsap.to(controls.target, { x: cam.target[0], y: cam.target[1], z: cam.target[2], duration: 1.5, ease: 'power3.inOut' });
+    updateBayAppearance(viewName);
+}
+
+function updateBayAppearance(viewMode) {
+    patientMeshes.forEach((bed, i) => {
+        const p = PATIENT_DATA[i];
+        if (!p) return;
+        let targetColor, targetEmissive;
+        switch (viewMode) {
+            case 'esi': targetColor = ESI_COLORS[p.esi]; targetEmissive = p.esi; break;
+            case 'waittime':
+                const wt = p.wait;
+                if (wt > 45) targetColor = COLORS.red; else if (wt > 30) targetColor = COLORS.amber; else if (wt > 20) targetColor = COLORS.esi3; else targetColor = COLORS.emerald;
+                targetEmissive = 0.2;
+                break;
+            case 'staff': case 'resources': targetColor = viewMode === 'staff' ? COLORS.navy : COLORS.light; targetEmissive = 0.05; break;
+            default: targetColor = ESI_COLORS[p.esi]; targetEmissive = p.esi;
+        }
+        gsap.to(bed.material.color, { r: ((targetColor>>16)&255)/255, g: ((targetColor>>8)&255)/255, b: (targetColor&255)/255, duration: 0.8 });
+        gsap.to(bed.material, { emissiveIntensity: targetEmissive, duration: 0.8 });
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// UI UPDATES
+// ═══════════════════════════════════════════════════════════════
+function updateStatsPanel() {
+    const avgWait = Math.round(PATIENT_DATA.reduce((s,p) => s + p.wait, 0) / PATIENT_DATA.length);
+    const lwbs = Math.floor(Math.random() * 3) + 1;
+    document.getElementById('bs-patients').textContent = PATIENT_DATA.length;
+    document.getElementById('bs-wait').textContent = avgWait + 'm';
+    document.getElementById('bs-lwbs').textContent = lwbs;
+    document.getElementById('bs-esi').textContent = '92%';
+    document.getElementById('stats-content').innerHTML = `
+        <div class="stat-row"><span class="stat-label">Avg Wait Time</span><span class="stat-value ${avgWait>30?'warn':'good'}">${avgWait} min</span></div>
+        <div class="stat-row"><span class="stat-label">LWBS Rate</span><span class="stat-value ${lwbs>2?'warn':'good'}">${lwbs} today</span></div>
+        <div class="stat-row"><span class="stat-label">ESI Accuracy</span><span class="stat-value good">92%</span></div>
+        <div class="stat-row"><span class="stat-label">Avg Risk Score</span><span class="stat-value info">${Math.round(PATIENT_DATA.reduce((s,p)=>s+p.risk,0)/PATIENT_DATA.length)}%</span></div>
+        <div class="stat-row"><span class="stat-label">Staff on Duty</span><span class="stat-value info">${STAFF_DATA.length}</span></div>
+        <div class="stat-row"><span class="stat-label">Beds Occupied</span><span class="stat-value info">${PATIENT_DATA.length}/15</span></div>
+        <div class="stat-row"><span class="stat-label">ICU Availability</span><span class="stat-value warn">1/4 beds</span></div>
+    `;
+}
+
+function updateTimeDisplay() {
+    const now = new Date();
+    document.getElementById('time-display').textContent = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+}
+
+function showPatientInfo(patient) {
+    const panel = document.getElementById('info-panel');
+    panel.style.display = 'block';
+    document.getElementById('info-id').textContent = patient.id;
+    document.getElementById('info-name').textContent = patient.name + ` (${patient.age}y)`;
+    document.getElementById('info-complaint').textContent = patient.complaint;
+    document.getElementById('info-vitals').innerHTML = `
+        <div class="info-vital"><div class="info-vital-label">Heart Rate</div><div class="info-vital-value" style="color:${patient.vitals.HR>100?'#EF4444':'#10B981'}">${patient.vitals.HR} bpm</div></div>
+        <div class="info-vital"><div class="info-vital-label">BP</div><div class="info-vital-value">${patient.vitals.BP}</div></div>
+        <div class="info-vital"><div class="info-vital-label">SpO2</div><div class="info-vital-value" style="color:${patient.vitals.SpO2<95?'#EF4444':'#10B981'}">${patient.vitals.SpO2}%</div></div>
+        <div class="info-vital"><div class="info-vital-label">Temp</div><div class="info-vital-value" style="color:${patient.vitals.Temp>38?'#F59E0B':'#10B981'}">${patient.vitals.Temp}°C</div></div>
+    `;
+    document.getElementById('info-recommendation').innerHTML = `<span class="info-tag tag-esi-${patient.esi}">ESI ${patient.esi} — ${ESI_LABELS[patient.esi]}</span><div style="font-size:0.78rem; margin-top:6px; color:#94A3B8;">${patient.aiRec}</div>`;
+    document.getElementById('info-allergies').innerHTML = patient.allergies.map(a => `<span class="info-tag" style="background:rgba(239,68,68,0.15);color:#FCA5A5;">${a}</span>`).join('');
+    gsap.fromTo(panel, { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: 0.4 });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SIDEBAR — RAG Chat / ESI / Search
+// ═══════════════════════════════════════════════════════════════
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    sidebar.classList.toggle('open');
+    overlay.classList.toggle('active');
+}
+
+function setSidebarMode(mode) {
+    sidebarMode = mode;
+    const titles = { chat: 'AI Assistant', esi: 'ESI Triage Assistant', search: 'Document Search' };
+    document.getElementById('sidebar-title').textContent = titles[mode] || 'AI Assistant';
+    renderSidebarContent();
+}
+
+function renderSidebarContent() {
+    const content = document.getElementById('sidebar-content');
+    if (sidebarMode === 'chat') {
+        content.innerHTML = `
+            <div class="chat-messages" id="chat-messages"></div>
+            <div class="chat-input-area">
+                <div class="chat-input-row">
+                    <input type="text" id="chat-input" placeholder="Ask about ED triage, ESI protocols, clinical guidelines..." onkeydown="if(event.key==='Enter')sendChat()">
+                    <button id="chat-send" onclick="sendChat()">Send</button>
+                </div>
+                <div class="quick-prompts">
+                    <button class="quick-prompt" onclick="quickAsk('What is the ESI triage algorithm?')">ESI Algorithm</button>
+                    <button class="quick-prompt" onclick="quickAsk('How do I assess chest pain in the ED?')">Chest Pain</button>
+                    <button class="quick-prompt" onclick="quickAsk('What are the ABCDE assessment steps?')">ABCDE</button>
+                    <button class="quick-prompt" onclick="quickAsk('How to identify sepsis early?')">Sepsis</button>
+                    <button class="quick-prompt" onclick="quickAsk('What are pediatric vital sign thresholds?')">Pediatrics</button>
+                </div>
+            </div>`;
+    } else if (sidebarMode === 'esi') {
+        content.innerHTML = `
+            <div class="esi-panel">
+                <div class="esi-form-group"><label>Patient Age</label><input type="number" id="esi-age" placeholder="Age in years" min="0" max="120"></div>
+                <div class="esi-form-group"><label>Chief Complaint</label><textarea id="esi-complaint" placeholder="Describe the patient's chief complaint..."></textarea></div>
+                <div class="esi-form-group"><label>Heart Rate (bpm)</label><input type="number" id="esi-hr" placeholder="HR"></div>
+                <div class="esi-form-group"><label>Blood Pressure</label><input type="text" id="esi-bp" placeholder="e.g. 120/80"></div>
+                <div class="esi-form-group"><label>SpO2 (%)</label><input type="number" id="esi-spo2" placeholder="SpO2" min="0" max="100"></div>
+                <div class="esi-form-group"><label>Respiratory Rate</label><input type="number" id="esi-rr" placeholder="RR"></div>
+                <div class="esi-form-group"><label>Temperature (°C)</label><input type="number" id="esi-temp" step="0.1" placeholder="Temp"></div>
+                <div class="esi-form-group"><label>Mental Status</label><select id="esi-mental"><option value="normal">Normal / Alert</option><option value="confused">Confused / Lethargic</option><option value="disoriented">Disoriented</option><option value="unresponsive">Unresponsive</option></select></div>
+                <div class="esi-form-group"><label>Resources Needed</label><select id="esi-resources"><option value="0">0 (No resources)</option><option value="1">1 resource</option><option value="2+">2 or more resources</option></select></div>
+                <button class="esi-btn" onclick="runESIAssessment()" id="esi-btn">Analyze ESI Classification</button>
+                <div id="esi-result"></div>
+            </div>`;
+    } else if (sidebarMode === 'search') {
+        content.innerHTML = `
+            <div class="chat-input-area" style="border-top:none; padding-top:0;">
+                <div class="chat-input-row">
+                    <input type="text" id="search-input" placeholder="Search clinical documents..." onkeydown="if(event.key==='Enter')runDocSearch()">
+                    <button id="chat-send" onclick="runDocSearch()">Search</button>
+                </div>
+            </div>
+            <div class="doc-search-results" id="doc-results"></div>`;
+    }
+}
+
+// ── RAG Chat ──────────────────────────────────────────────────
+async function sendChat() {
+    const input = document.getElementById('chat-input');
+    const query = input.value.trim();
+    if (!query) return;
+    input.value = '';
+    const btn = document.getElementById('chat-send');
+    btn.disabled = true;
+
+    // Add user message
+    const msgs = document.getElementById('chat-messages');
+    const userDiv = document.createElement('div');
+    userDiv.className = 'chat-msg user';
+    userDiv.innerHTML = `<div class="chat-bubble"><p>${escapeHtml(query)}</p></div>`;
+    msgs.appendChild(userDiv);
+    msgs.scrollTop = msgs.scrollHeight;
+
+    // Add loading
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'chat-msg assistant';
+    loadingDiv.id = 'chat-loading';
+    loadingDiv.innerHTML = `<div class="chat-bubble"><p style="color:var(--muted);">Searching clinical knowledge base...</p></div>`;
+    msgs.appendChild(loadingDiv);
+    msgs.scrollTop = msgs.scrollHeight;
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, session_id: sessionId, use_hybrid: true, use_reranking: true }),
+        });
+        const data = await resp.json();
+
+        // Remove loading
+        document.getElementById('chat-loading')?.remove();
+
+        // Add assistant response
+        const confClass = data.confidence > 0.7 ? 'confidence-high' : data.confidence > 0.4 ? 'confidence-med' : 'confidence-low';
+        const sourcesHtml = data.sources.map((s, i) => `<span class="source-tag">[S${i+1}] ${escapeHtml(s.source || 'Unknown')}</span>`).join('');
+        const assistantDiv = document.createElement('div');
+        assistantDiv.className = 'chat-msg assistant';
+        assistantDiv.innerHTML = `
+            <div class="chat-bubble">
+                <p>${formatAnswer(data.answer)}</p>
+                <div style="margin-top:8px;">${sourcesHtml}</div>
+                <div class="latency-tag">${data.latency_ms}ms | Confidence: ${Math.round(data.confidence * 100)}%</div>
+            </div>`;
+        msgs.appendChild(assistantDiv);
+        msgs.scrollTop = msgs.scrollHeight;
+
+        // Update metrics
+        document.getElementById('m-latency').textContent = data.latency_ms + 'ms';
+        document.getElementById('m-confidence').textContent = Math.round(data.confidence * 100) + '%';
+        document.getElementById('m-sources').textContent = data.sources.length;
+        document.getElementById('rag-metrics').style.display = 'block';
+    } catch (err) {
+        document.getElementById('chat-loading')?.remove();
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'chat-msg assistant';
+        errorDiv.innerHTML = `<div class="chat-bubble"><p style="color:var(--red);">Error: ${err.message}. Make sure the backend server is running on port 8000.</p></div>`;
+        msgs.appendChild(errorDiv);
+    }
+    btn.disabled = false;
+}
+
+function quickAsk(query) {
+    document.getElementById('chat-input').value = query;
+    sendChat();
+}
+
+function formatAnswer(text) {
+    return escapeHtml(text).replace(/\[Source (\d+)\]/g, '<strong style="color:var(--sky);">[$1]</strong>').replace(/\n/g, '<br>');
+}
+
+// ── ESI Triage Assessment ──────────────────────────────────────
+async function runESIAssessment() {
+    const btn = document.getElementById('esi-btn');
+    btn.disabled = true;
+    btn.textContent = 'Analyzing...';
+
+    const age = document.getElementById('esi-age').value;
+    const complaint = document.getElementById('esi-complaint').value;
+    const hr = document.getElementById('esi-hr').value;
+    const bp = document.getElementById('esi-bp').value;
+    const spo2 = document.getElementById('esi-spo2').value;
+    const rr = document.getElementById('esi-rr').value;
+    const temp = document.getElementById('esi-temp').value;
+    const mental = document.getElementById('esi-mental').value;
+    const resources = document.getElementById('esi-resources').value;
+
+    const query = `Patient ${age}y with ${complaint}. Vitals: HR ${hr}, BP ${bp}, SpO2 ${spo2}%, RR ${rr}, Temp ${temp}°C. Mental status: ${mental}. Resources needed: ${resources}. What ESI level?`;
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, session_id: sessionId + '_esi', use_hybrid: true, use_reranking: true }),
+        });
+        const data = await resp.json();
+
+        // Determine ESI level from the response
+        const esiMatch = data.answer.match(/ESI\s*(?:Level\s*)?([1-5])/i);
+        const esiLevel = esiMatch ? parseInt(esiMatch[1]) : 3;
+
+        const resultDiv = document.getElementById('esi-result');
+        resultDiv.innerHTML = `
+            <div class="esi-result">
+                <h4>AI-Assisted Classification</h4>
+                <div class="esi-level-display">
+                    <div class="esi-level-badge esi-${esiLevel}">${esiLevel}</div>
+                    <div class="esi-level-info">
+                        <div class="level-name">ESI Level ${esiLevel} — ${ESI_LABELS[esiLevel]}</div>
+                        <div class="level-desc">${ESI_DESCRIPTIONS[esiLevel]}</div>
+                    </div>
+                </div>
+                <div style="font-size:0.8rem; color:#94A3B8; line-height:1.6;">${formatAnswer(data.answer)}</div>
+                <div class="latency-tag" style="margin-top:8px;">${data.latency_ms}ms | Sources: ${data.sources.length}</div>
+            </div>`;
+    } catch (err) {
+        document.getElementById('esi-result').innerHTML = `<div class="esi-result" style="border-color:var(--red);"><p style="color:var(--red);">Error: ${err.message}</p></div>`;
+    }
+    btn.disabled = false;
+    btn.textContent = 'Analyze ESI Classification';
+}
+
+// ── Document Search ─────────────────────────────────────────────
+async function runDocSearch() {
+    const input = document.getElementById('search-input');
+    const query = input.value.trim();
+    if (!query) return;
+    const resultsDiv = document.getElementById('doc-results');
+    resultsDiv.innerHTML = '<div style="padding:12px; color:var(--muted); font-size:0.85rem;">Searching...</div>';
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, session_id: sessionId + '_search', use_hybrid: true, use_reranking: true }),
+        });
+        const data = await resp.json();
+        resultsDiv.innerHTML = data.sources.map((s, i) => `
+            <div class="doc-result-card">
+                <div class="doc-result-source">${escapeHtml(s.source || 'Unknown')} ${s.page ? '— p.' + s.page : ''}</div>
+                <div class="doc-result-text">${escapeHtml(s.text_preview || '')}</div>
+                <div class="doc-result-meta"><span>Score: ${s.score}</span>${s.section ? '<span>' + escapeHtml(s.section) + '</span>' : ''}</div>
+            </div>
+        `).join('') + `<div style="padding:12px; font-size:0.8rem; color:#94A3B8; border-top:1px solid var(--border); margin-top:8px;"><strong>Summary:</strong> ${formatAnswer(data.answer.substring(0, 300))}...</div>`;
+    } catch (err) {
+        resultsDiv.innerHTML = `<div style="padding:12px; color:var(--red);">Error: ${err.message}</div>`;
+    }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RAYCASTING / INTERACTION
+// ═══════════════════════════════════════════════════════════════
+function onMouseMove(event) {
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+}
+
+function onClick(event) {
+    if (event.target.closest('#sidebar') || event.target.closest('#sidebar-overlay') || event.target.closest('#top-nav') || event.target.closest('#sidebar-toggle')) return;
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(patientMeshes);
+    if (intersects.length > 0) {
+        const obj = intersects[0].object;
+        if (obj.userData.type === 'patient') {
+            STATE.selectedPatient = obj.userData.patient;
+            showPatientInfo(obj.userData.patient);
+            gsap.to(obj.scale, { x: 1.3, y: 1.5, z: 1.3, duration: 0.3, yoyo: true, repeat: 1 });
+        }
+    } else {
+        document.getElementById('info-panel').style.display = 'none';
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ALERT SYSTEM
+// ═══════════════════════════════════════════════════════════════
+function showAlert(text, type = 'warning') {
+    const toast = document.getElementById('alert-toast');
+    const icon = document.getElementById('alert-icon');
+    const textEl = document.getElementById('alert-text');
+    textEl.textContent = text;
+    icon.textContent = type === 'critical' ? '!' : '⚠';
+    icon.style.background = type === 'critical' ? 'rgba(239,68,68,0.3)' : 'rgba(245,158,11,0.3)';
+    icon.style.color = type === 'critical' ? '#EF4444' : '#F59E0B';
+    toast.style.background = type === 'critical' ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.15)';
+    toast.style.border = type === 'critical' ? '1px solid rgba(239,68,68,0.3)' : '1px solid rgba(245,158,11,0.3)';
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 4000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ANIMATION LOOP
+// ═══════════════════════════════════════════════════════════════
+let time = 0;
+function animate() {
+    requestAnimationFrame(animate);
+    time += 0.016;
+    controls.update();
+    patientMeshes.forEach((bed, i) => {
+        const ring = scene.children.find(c => c.userData && c.userData.type === 'patientGlow' && c.userData.index === i);
+        if (ring) { ring.material.opacity = 0.15 + Math.sin(time * 2 + i) * 0.1; ring.rotation.z += 0.005; }
+    });
+    if (particleSystem) {
+        const pos = particleSystem.userData.positions;
+        const vel = particleSystem.userData.velocities;
+        for (let i = 0; i < pos.length / 3; i++) {
+            pos[i*3] += vel[i].x + Math.sin(time + i) * 0.003;
+            pos[i*3+1] += vel[i].y;
+            pos[i*3+2] += vel[i].z + Math.cos(time + i) * 0.003;
+            if (Math.abs(pos[i*3]) > 9) vel[i].x *= -1;
+            if (pos[i*3+1] > 4 || pos[i*3+1] < 0.1) vel[i].y *= -1;
+            if (Math.abs(pos[i*3+2]) > 6) vel[i].z *= -1;
+        }
+        particleSystem.geometry.attributes.position.needsUpdate = true;
+    }
+    staffMeshes.forEach(staff => {
+        const d = staff.userData;
+        d.walkAngle += d.walkSpeed * 0.016;
+        const wx = d.originalPos.x + Math.sin(d.walkAngle) * d.walkRadius;
+        const wz = d.originalPos.z + Math.cos(d.walkAngle * 0.7) * d.walkRadius;
+        gsap.to(staff.position, { x: THREE.MathUtils.clamp(wx, -8, 8), z: THREE.MathUtils.clamp(wz, -8, 8), duration: 0.5, ease: 'sine.inOut' });
+    });
+    if (ambientParticles) {
+        const pos = ambientParticles.geometry.attributes.position.array;
+        for (let i = 0; i < pos.length / 3; i++) { pos[i*3+1] += Math.sin(time * 0.5 + i * 0.1) * 0.003; }
+        ambientParticles.geometry.attributes.position.needsUpdate = true;
+        ambientParticles.rotation.y += 0.0002;
+    }
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(patientMeshes);
+    document.body.style.cursor = intersects.length > 0 ? 'pointer' : 'default';
+    renderer.render(scene, camera);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EVENT HANDLERS
+// ═══════════════════════════════════════════════════════════════
+function setupEventListeners() {
+    document.querySelectorAll('.nav-btn').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('click', onClick);
+    window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+    window.addEventListener('keydown', (e) => {
+        switch (e.key) {
+            case '1': switchView('floor'); break;
+            case '2': switchView('esi'); break;
+            case '3': switchView('waittime'); break;
+            case '4': switchView('staff'); break;
+            case '5': switchView('resources'); break;
+            case 'Escape': document.getElementById('info-panel').style.display = 'none'; STATE.selectedPatient = null; break;
+            case 'c': case 'C': setSidebarMode('chat'); toggleSidebar(); break;
+            case 'e': case 'E': setSidebarMode('esi'); toggleSidebar(); break;
+            case 's': case 'S': setSidebarMode('search'); toggleSidebar(); break;
+        }
+    });
+    document.getElementById('sidebar-toggle').addEventListener('click', () => { if (!document.getElementById('sidebar').classList.contains('open')) { setSidebarMode('chat'); } toggleSidebar(); });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DATA SIMULATION
+// ═══════════════════════════════════════════════════════════════
+function startDataSimulation() {
+    setInterval(updateTimeDisplay, 1000);
+    updateTimeDisplay();
+    setInterval(() => { PATIENT_DATA.forEach(p => { p.wait += Math.random() > 0.7 ? 1 : 0; p.risk = Math.min(99, p.risk + Math.random() * 2); }); updateStatsPanel(); }, 5000);
+    const alerts = [
+        { text: 'ESI Level 1 patient awaiting CT — 12 min delay', type: 'critical' },
+        { text: 'ICU bed availability: 1 of 4 remaining', type: 'warning' },
+        { text: 'Patient deterioration detected — vital sign trend', type: 'critical' },
+        { text: 'Staff fatigue alert: approaching shift limit', type: 'warning' },
+        { text: 'Syndromic pattern: 4 respiratory cases in 2 hours', type: 'warning' },
+        { text: 'CT Scanner queue: 3 patients waiting', type: 'warning' },
+        { text: 'RAG pipeline: 94% retrieval accuracy on latest query', type: 'info' },
+    ];
+    let alertIndex = 0;
+    setInterval(() => { const alert = alerts[alertIndex % alerts.length]; showAlert(alert.text, alert.type); alertIndex++; }, 12000);
+    updateStatsPanel();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ENTRANCE ANIMATION
+// ═══════════════════════════════════════════════════════════════
+function playEntrance() {
+    camera.position.set(30, 25, 30);
+    gsap.to(camera.position, { x: 18, y: 16, z: 18, duration: 2.5, ease: 'power3.out' });
+    setTimeout(() => gsap.to('#stats-panel', { opacity: 1, x: 0, duration: 0.8, ease: 'power2.out' }), 800);
+    setTimeout(() => gsap.to('#esi-legend', { opacity: 1, y: 0, duration: 0.8, ease: 'power2.out' }), 1000);
+    setTimeout(() => gsap.to('#bottom-bar', { opacity: 1, y: 0, duration: 0.8, ease: 'power2.out' }), 1200);
+    setTimeout(() => { document.getElementById('loading').classList.add('hidden'); }, 2000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INITIALIZATION
+// ═══════════════════════════════════════════════════════════════
+function init() {
+    initScene();
+    buildHospital();
+    createPatientBays();
+    createStaff();
+    createParticles();
+    ambientParticles = createAmbientParticles();
+    setupEventListeners();
+    startDataSimulation();
+    animate();
+    playEntrance();
+    console.log('🏥 ED Triage Assist — AI-Powered RAG Platform Initialized');
+    console.log(`   ${PATIENT_DATA.length} patients | ${STAFF_DATA.length} staff | ${RESOURCE_DATA.length} resources`);
+    console.log('   Keyboard: 1-5 switch views | C=Chat | E=ESI | S=Search | ESC=close');
+}
+
+if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); } else { init(); }
+</script>
+</body>
+</html>
