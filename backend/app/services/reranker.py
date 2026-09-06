@@ -33,10 +33,8 @@ class CrossEncoderReranker:
     def load_model(self):
         """Lazy load the reranker model."""
         if self.model is None:
-            logger.info(f"Loading cross-encoder model: {self.model_name}")
-            from sentence_transformers import CrossEncoder
-            self.model = CrossEncoder(self.model_name)
-            logger.info("Cross-encoder model loaded")
+            logger.info(f"Skipping cross-encoder model load ({self.model_name}) to save memory on Render Free Tier.")
+            self.model = "disabled"
 
     def rerank(
         self,
@@ -53,6 +51,9 @@ class CrossEncoderReranker:
 
         self.load_model()
         top_k = top_k or settings.top_k_rerank
+
+        if self.model == "disabled":
+            return documents[:top_k]
 
         # Prepare pairs for cross-encoder
         pairs = [(query, doc.text[:512]) for doc in documents]

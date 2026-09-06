@@ -498,11 +498,8 @@ class AMERetriever:
     def get_cross_encoder(self):
         """Get or initialize the cross-encoder reranker."""
         if self._cross_encoder is None:
-            try:
-                from sentence_transformers import CrossEncoder
-                self._cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-            except Exception as e:
-                logger.warning(f"Could not load cross-encoder: {e}")
+            logger.info("Skipping cross-encoder model load to save memory on Render Free Tier.")
+            self._cross_encoder = "disabled"
         return self._cross_encoder
 
     def retrieve(
@@ -622,7 +619,7 @@ class AMERetriever:
     def _cross_encoder_rerank(self, query: str, docs: List[Dict], top_k: int) -> List[Dict]:
         """Stage 3: Cross-encoder reranking."""
         ce = self.get_cross_encoder()
-        if not ce or len(docs) <= top_k:
+        if not ce or ce == "disabled" or len(docs) <= top_k:
             return docs[:top_k]
 
         try:
