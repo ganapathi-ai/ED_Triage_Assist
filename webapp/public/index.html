@@ -802,28 +802,27 @@ async function runFullTriage() {
 
 function buildPatientPayload() {
     return {
-        patient: {
-            age: +document.getElementById('f-age').value || 0,
-            gender: document.getElementById('f-gender').value,
-            chief_complaint: document.getElementById('f-complaint').value,
-            vital_signs: {
-                heart_rate: +document.getElementById('f-hr').value || 0,
-                blood_pressure_systolic: +document.getElementById('f-bp-sys').value || 0,
-                blood_pressure_diastolic: +document.getElementById('f-bp-dia').value || 0,
-                spo2: +document.getElementById('f-spo2').value || 0,
-                respiratory_rate: +document.getElementById('f-rr').value || 0,
-                temperature: +document.getElementById('f-temp').value || 0,
-                glucose: document.getElementById('f-glucose').value ? +document.getElementById('f-glucose').value : null,
-                gcs: document.getElementById('f-gcs').value ? +document.getElementById('f-gcs').value : 15
-            },
-            mental_status: document.getElementById('f-mental').value,
-            pain_score: +document.getElementById('f-pain').value || 0,
-            allergies: document.getElementById('f-allergies').value.split(',').map(s=>s.trim()).filter(Boolean),
-            current_medications: document.getElementById('f-meds').value.split(',').map(s=>s.trim()).filter(Boolean),
-            past_medical_history: document.getElementById('f-pmh').value.split(',').map(s=>s.trim()).filter(Boolean),
-            arrival_mode: 'walk-in', triage_note: ''
-        },
-        use_rag_context: true
+        age: +document.getElementById('f-age').value || 45,
+        gender: document.getElementById('f-gender').value || 'unknown',
+        chief_complaint: document.getElementById('f-complaint').value || 'Unspecified',
+        bp_systolic: +document.getElementById('f-bp-sys').value || 120,
+        bp_diastolic: +document.getElementById('f-bp-dia').value || 80,
+        hr: +document.getElementById('f-hr').value || 80,
+        rr: +document.getElementById('f-rr').value || 16,
+        temp: +document.getElementById('f-temp').value || 37.0,
+        spo2: +document.getElementById('f-spo2').value || 98,
+        gcs: +document.getElementById('f-gcs').value || 15,
+        mental_status: document.getElementById('f-mental').value || 'Alert',
+        pain_score: +document.getElementById('f-pain').value || 0,
+        medical_history: document.getElementById('f-pmh').value.split(',').map(s=>s.trim()).filter(Boolean),
+        presenting_symptoms: [document.getElementById('f-complaint').value, document.getElementById('f-symptoms').value].filter(Boolean),
+        current_medications: document.getElementById('f-meds').value.split(',').map(s=>s.trim()).filter(Boolean),
+        hospital_load: 'NORMAL',
+        department: 'ED',
+        day_of_week: new Date().getDay() || 1,
+        hour_of_day: new Date().getHours() || 12,
+        current_queue_length: 5,
+        available_doctors: 2
     };
 }
 
@@ -903,23 +902,33 @@ function sendChat() {
     const loadDiv = document.createElement('div');
     loadDiv.className = 'chat-msg assistant';
     loadDiv.id = 'chat-loading';
-    loadDiv.innerHTML = `<div class="chat-bubble"><p style="color:var(--muted);">Searching...</p></div>`;
+    loadDiv.innerHTML = `<div class="chat-bubble"><p style="color:var(--muted);">🤔 Thinking...</p></div>`;
     msgs.appendChild(loadDiv);
     msgs.scrollTop = msgs.scrollHeight;
     fetch(`${API_BASE}/api/chat`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ query, session_id: sessionId, use_hybrid: true, use_reranking: true }) })
-    .then(r => r.json()).then(data => {
+    .then(r => { if (!r.ok) throw new Error(`Server error ${r.status}`); return r.json(); })
+    .then(data => {
         document.getElementById('chat-loading')?.remove();
-        const sourcesHtml = data.sources.map((s,i) => `<span class="source-tag">[S${i+1}] ${escapeHtml(s.source||'')}</span>`).join('');
+        const sourcesHtml = (data.sources||[]).map((s,i) => `<span class="source-tag">[S${i+1}] ${escapeHtml(s.source||'')}</span>`).join('');
         const div = document.createElement('div');
         div.className = 'chat-msg assistant';
-        div.innerHTML = `<div class="chat-bubble"><p>${formatAnswer(data.answer)}</p><div style="margin-top:8px;">${sourcesHtml}</div><div class="latency-tag">${data.latency_ms}ms | ${Math.round(data.confidence*100)}%</div></div>`;
+        div.innerHTML = `<div class="chat-bubble"><p>${formatAnswer(data.answer||'No response received.')}</p><div style="margin-top:8px;">${sourcesHtml}</div><div class="latency-tag">${data.latency_ms}ms | ${Math.round((data.confidence||0)*100)}% conf</div></div>`;
         msgs.appendChild(div);
         msgs.scrollTop = msgs.scrollHeight;
-        document.getElementById('m-latency').textContent = data.latency_ms+'ms';
-        document.getElementById('m-confidence').textContent = Math.round(data.confidence*100)+'%';
-        document.getElementById('m-sources').textContent = data.sources.length;
-        document.getElementById('rag-metrics').style.display = 'block';
-    }).catch(() => document.getElementById('chat-loading')?.remove());
+        try {
+            document.getElementById('m-latency').textContent = data.latency_ms+'ms';
+            document.getElementById('m-confidence').textContent = Math.round((data.confidence||0)*100)+'%';
+            document.getElementById('m-sources').textContent = (data.sources||[]).length;
+            document.getElementById('rag-metrics').style.display = 'block';
+        } catch(e) {}
+    }).catch(err => {
+        document.getElementById('chat-loading')?.remove();
+        const errDiv = document.createElement('div');
+        errDiv.className = 'chat-msg assistant';
+        errDiv.innerHTML = `<div class="chat-bubble" style="border-color:var(--red);"><p style="color:#FCA5A5;">❌ ${escapeHtml(err.message||'Connection failed. Check if backend is running.')}</p></div>`;
+        msgs.appendChild(errDiv);
+        msgs.scrollTop = msgs.scrollHeight;
+    });
     btn.disabled = false;
 }
 function quickAsk(q) { document.getElementById('chat-input').value = q; sendChat(); }

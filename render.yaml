@@ -4,27 +4,21 @@ services:
     runtime: python
     region: frankfurt
     plan: starter
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.api.main:app --host 0.0.0.0 --port $PORT --workers 2
+    buildCommand: cd backend && pip install -r requirements.txt
+    startCommand: cd backend && uvicorn app.api.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: "3.11"
       - key: ENVIRONMENT
         value: production
       - key: LLM_PROVIDER
-        value: openai
+        value: groq
       - key: LLM_MODEL
-        value: gpt-4o-mini
+        value: groq/compound-mini
       - key: LLM_TEMPERATURE
         value: "0.1"
       - key: LLM_MAX_TOKENS
-        value: "2000"
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
-      - key: OPENROUTER_API_KEY
-        sync: false
+        value: "1500"
       - key: GROQ_API_KEY
         sync: false
       - key: EMBEDDING_MODEL
@@ -44,7 +38,7 @@ services:
       - key: PARENT_CHUNK_OVERLAP
         value: "100"
       - key: TOP_K_RETRIEVAL
-        value: "20"
+        value: "10"
       - key: TOP_K_RERANK
         value: "5"
       - key: TOP_K_FINAL
@@ -60,14 +54,10 @@ services:
       - key: CORS_ORIGINS
         value: "*"
       - key: DOCUMENTS_DIR
-        value: data
+        value: ./data/docs
       - key: PROCESSED_DIR
-        value: data/processed
+        value: /tmp/processed
       - key: MAX_FILE_SIZE_MB
         value: "50"
     healthCheckPath: /health
     autoDeploy: true
-    disk:
-      name: chroma-data
-      mountPath: /tmp/chroma
-      sizeGB: 1

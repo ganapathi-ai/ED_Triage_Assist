@@ -28,8 +28,9 @@ class LLMService:
                 api_key = os.getenv("ANTHROPIC_API_KEY", "")
                 self._client = anthropic.Anthropic(api_key=api_key)
             elif self.provider == "groq":
-                groq_key = os.getenv("GROQ_API_KEY", "")
-                self._client = {"api_key": groq_key, "base_url": "https://api.groq.com/openai/v1"}
+                from groq import Groq
+                api_key = os.getenv("GROQ_API_KEY", "")
+                self._client = Groq(api_key=api_key)
         return self._client
 
     def generate(
@@ -48,7 +49,7 @@ class LLMService:
             elif self.provider == "anthropic":
                 return self._generate_anthropic(prompt, system_prompt, max_tokens, temperature, model)
             elif self.provider == "groq":
-                return self._generate_openai_compat(prompt, system_prompt, max_tokens, temperature, model)
+                return self._generate_groq(prompt, system_prompt, max_tokens, temperature, model)
             else:
                 return self._generate_fallback(prompt)
         except Exception as e:
@@ -79,20 +80,20 @@ class LLMService:
         response = client.messages.create(**kwargs)
         return response.content[0].text
 
-    def _generate_openai_compat(self, prompt, system_prompt, max_tokens, temperature, model):
+    def _generate_groq(self, prompt, system_prompt, max_tokens, temperature, model):
+        """Generate using the Groq SDK."""
         client = self._get_client()
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
-        response = httpx.post(
-            f"{client['base_url']}/chat/completions",
-            headers={"Authorization": f"Bearer {client['api_key']}", "Content-Type": "application/json"},
-            json={"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature},
-            timeout=60,
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
         )
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
+        return response.choices[0].message.content
 
     def _generate_fallback(self, prompt: str) -> str:
         return "I'm unable to process that query right now. Please try again or rephrase your question."
