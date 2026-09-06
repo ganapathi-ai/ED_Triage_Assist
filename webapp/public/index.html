@@ -680,8 +680,26 @@ function triageFormHTML() {
             <div class="form-group"><label>Gender</label><select id="f-gender"><option>Male</option><option>Female</option><option>Other</option></select></div>
         </div>
         <div class="form-section-title">Chief Complaint</div>
-        <div class="form-group"><textarea id="f-complaint" placeholder="Primary reason for visit..." required></textarea></div>
-        <div class="form-group"><label>Symptoms</label><textarea id="f-symptoms" placeholder="Additional symptoms..."></textarea></div>
+        <div class="form-group"><input type="text" id="f-complaint" list="complaint-list" placeholder="Primary reason for visit..." required></div>
+        <datalist id="complaint-list">
+            <option value="Chest pain">
+            <option value="Shortness of breath">
+            <option value="Abdominal pain">
+            <option value="Fever">
+            <option value="Headache">
+            <option value="Motor vehicle collision">
+            <option value="Fall">
+            <option value="Laceration">
+        </datalist>
+        <div class="form-group"><label>Symptoms</label><input type="text" id="f-symptoms" list="symptoms-list" placeholder="Additional symptoms..."></div>
+        <datalist id="symptoms-list">
+            <option value="Nausea and vomiting">
+            <option value="Dizziness">
+            <option value="Diaphoresis">
+            <option value="Cough">
+            <option value="Weakness">
+            <option value="Palpitations">
+        </datalist>
         <div class="form-section-title">Vital Signs</div>
         <div class="form-row-3">
             <div class="form-group"><label>HR</label><input type="number" id="f-hr" min="20" max="300" required></div>
@@ -702,9 +720,34 @@ function triageFormHTML() {
             <div class="form-group"><label>Mental Status</label><select id="f-mental"><option>Alert</option><option>Confused</option><option>Lethargic</option><option>Unresponsive</option></select></div>
             <div class="form-group"><label>Pain (0-10)</label><input type="number" id="f-pain" min="0" max="10" value="0"></div>
         </div>
-        <div class="form-group"><label>Allergies</label><input type="text" id="f-allergies" placeholder="Penicillin, Latex..."></div>
-        <div class="form-group"><label>Medications</label><input type="text" id="f-meds" placeholder="Current meds"></div>
-        <div class="form-group"><label>Medical History</label><input type="text" id="f-pmh" placeholder="PMH"></div>
+        <div class="form-group"><label>Allergies</label><input type="text" id="f-allergies" list="allergies-list" placeholder="Penicillin, Latex..."></div>
+        <datalist id="allergies-list">
+            <option value="NKDA">
+            <option value="Penicillin">
+            <option value="Sulfa">
+            <option value="Latex">
+            <option value="Peanuts">
+        </datalist>
+        <div class="form-group"><label>Medications</label><input type="text" id="f-meds" list="meds-list" placeholder="Current meds"></div>
+        <datalist id="meds-list">
+            <option value="None">
+            <option value="Lisinopril">
+            <option value="Metformin">
+            <option value="Amlodipine">
+            <option value="Omeprazole">
+            <option value="Albuterol">
+            <option value="Aspirin">
+        </datalist>
+        <div class="form-group"><label>Medical History</label><input type="text" id="f-pmh" list="pmh-list" placeholder="PMH"></div>
+        <datalist id="pmh-list">
+            <option value="None">
+            <option value="Hypertension">
+            <option value="Diabetes Type 2">
+            <option value="Hyperlipidemia">
+            <option value="Asthma">
+            <option value="COPD">
+            <option value="CAD">
+        </datalist>
         <button type="submit" class="btn-primary" id="triage-btn">Run Full Triage</button>
         <button type="button" class="btn-secondary" onclick="runESIOnly()">ESI Only</button>
         <div id="triage-result"></div>
@@ -1039,6 +1082,7 @@ function setupEvents() {
         }
     });
     window.addEventListener('keydown', e => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
         switch(e.key) {
             case '1': switchView('floor'); break;
             case '2': switchView('esi'); break;
