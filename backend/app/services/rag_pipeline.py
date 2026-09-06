@@ -67,7 +67,7 @@ class RAGPipeline:
         )
         self.amer_retriever = AMERetriever(
             fast_embedding_model=settings.embedding_model,
-            clinical_embedding_model="microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract",
+            clinical_embedding_model=None,
         )
 
         # Stats
