@@ -41,9 +41,9 @@
         #sidebar-toggle { position: fixed; top: 20px; left: 20px; z-index: 200; width: 48px; height: 48px; border-radius: 14px; border: none; background: var(--glass-bg); backdrop-filter: blur(24px); color: var(--light); font-size: 1.3rem; cursor: pointer; transition: all 0.3s; display: flex; align-items: center; justify-content: center; }
         #sidebar-toggle:hover { color: var(--sky); background: rgba(14,165,233,0.15); }
 
-        /* Sidebar — slides from left */
-        #sidebar { position: fixed; top: 0; left: -460px; width: 440px; height: 100vh; z-index: 150; background: rgba(15,23,42,0.97); backdrop-filter: blur(40px); border-right: 1px solid var(--glass-border); transition: left 0.4s cubic-bezier(0.4,0,0.2,1); display: flex; flex-direction: column; }
-        #sidebar.open { left: 0; }
+        /* Centered Panel (formerly Sidebar) */
+        #sidebar { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.95); width: 800px; max-width: 90vw; height: 85vh; z-index: 150; background: rgba(15,23,42,0.85); backdrop-filter: blur(40px); border: 1px solid var(--glass-border); border-radius: 16px; opacity: 0; pointer-events: none; transition: all 0.3s cubic-bezier(0.4,0,0.2,1); display: flex; flex-direction: column; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
+        #sidebar.open { opacity: 1; pointer-events: all; transform: translate(-50%, -50%) scale(1); }
         #sidebar-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 140; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
         #sidebar-overlay.active { opacity: 1; pointer-events: all; }
         .sidebar-header { padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
@@ -191,8 +191,8 @@
         ::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 2px; }
 
         @media (max-width: 1024px) {
-            #sidebar { width: 100%; left: -460px; }
-            #sidebar.open { left: 0; }
+            #sidebar { width: 95%; max-width: 95vw; height: 90vh; }
+            #sidebar.open { opacity: 1; pointer-events: all; transform: translate(-50%, -50%) scale(1); }
             .nav-btn { padding: 8px 14px; font-size: 0.72rem; }
         }
     </style>
