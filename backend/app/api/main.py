@@ -111,22 +111,21 @@ async def chat_endpoint(request: ChatRequest):
     try:
         pipeline = get_rag()
         result = pipeline.query(
-            question=request.query,
-            conversation_history=None,
-            filters={},
+            user_query=request.query,
+            session_id=request.session_id,
         )
         sources = [
             Source(
                 source=s.get("source", ""),
                 page=s.get("page"),
-                excerpt=s.get("text", "")[:300],
-                relevance=float(s.get("rerank_score", s.get("score", 0.0))),
+                excerpt=s.get("text_preview", "")[:300],
+                relevance=float(s.get("score", 0.0)),
             )
-            for s in result.get("sources", [])[:5]
+            for s in result.sources[:5]
         ]
         return ChatResponse(
-            answer=result.get("answer", ""),
-            confidence=float(result.get("confidence", 0.0)),
+            answer=result.answer,
+            confidence=float(result.confidence),
             sources=sources,
             latency_ms=round((time.time() - start) * 1000, 1),
         )
@@ -327,7 +326,6 @@ async def search_documents(request: SearchRequest):
         pipeline = get_rag()
         results = pipeline.search(
             query=request.query,
-            filters={},
             top_k=request.top_k or 5,
         )
         items = [
@@ -335,7 +333,7 @@ async def search_documents(request: SearchRequest):
                 source=r.get("source", ""),
                 page=r.get("page"),
                 excerpt=r.get("text", "")[:500],
-                score=float(r.get("rerank_score", r.get("score", 0.0))),
+                score=float(r.get("score", 0.0)),
             )
             for r in results[: request.top_k or 5]
         ]
