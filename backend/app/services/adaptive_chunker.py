@@ -464,11 +464,11 @@ class AMERetriever:
     def _init_embedders(self):
         """Initialize embedding models lazily."""
         try:
-            from sentence_transformers import SentenceTransformer
-            self._fast_embedder = SentenceTransformer(self.fast_model_name)
-            logger.info(f"AMER fast embedder loaded: {self.fast_model_name}")
+            from app.services.embeddings import embedding_service
+            self._fast_embedder = embedding_service
+            logger.info(f"AMER fast embedder linked to global embedding_service")
         except Exception as e:
-            logger.warning(f"Could not load fast embedder: {e}")
+            logger.warning(f"Could not link fast embedder: {e}")
 
         try:
             from sentence_transformers import SentenceTransformer
@@ -482,16 +482,16 @@ class AMERetriever:
         if stage == "clinical" and self._clinical_embedder:
             return self._clinical_embedder.encode(query, normalize_embeddings=True).tolist()
         elif self._fast_embedder:
-            return self._fast_embedder.encode(query, normalize_embeddings=True).tolist()
+            return self._fast_embedder.embed_query(query)
         else:
             raise RuntimeError("No embedder available")
 
     def embed_batch(self, texts: List[str], stage: str = "fast") -> List[List[float]]:
         """Embed a batch of texts."""
         if stage == "clinical" and self._clinical_embedder:
-            return self._clinical_embedder.encode(texts, normalize_embeddings=True, show_progress_bar=False).tolist()
+            return self._clinical_embedder.encode(texts, normalize_embeddings=True).tolist()
         elif self._fast_embedder:
-            return self._fast_embedder.encode(texts, normalize_embeddings=True, show_progress_bar=False).tolist()
+            return self._fast_embedder.embed_documents(texts)
         else:
             raise RuntimeError("No embedder available")
 
