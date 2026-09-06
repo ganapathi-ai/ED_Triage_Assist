@@ -32,25 +32,42 @@ class VectorStore:
         )
         logger.info(f"Vector store initialized: {self.collection_name}")
 
-    def add_documents(self, chunks: List[dict], embeddings: List[List[float]] = None):
+    def add_documents(self, ids=None, documents=None, embeddings=None, metadatas=None, chunks=None):
+        """
+        Add documents to the vector store.
+        Supports two calling conventions:
+        - add_documents(ids=[...], documents=[...], embeddings=[...], metadatas=[...])
+        - add_documents(chunks=[{chunk_id, text, metadata}, ...])
+        """
         if not self.collection:
             self.initialize()
-        if not chunks:
+
+        # Normalize to list of items
+        if chunks is not None and isinstance(chunks, list):
+            ids = [c["chunk_id"] for c in chunks]
+            documents = [c["text"] for c in chunks]
+            metadatas = [c.get("metadata", {}) for c in chunks]
+            # Embeddings may be provided separately or computed
+            if embeddings is None:
+                embeddings = embedding_service.embed_documents(documents)
+        elif ids is None or documents is None:
             return
-        ids = [c["chunk_id"] for c in chunks]
-        documents = [c["text"] for c in chunks]
-        metadatas = [c.get("metadata", {}) for c in chunks]
+
+        if not ids or not documents:
+            return
+
         if embeddings is None:
             embeddings = embedding_service.embed_documents(documents)
+
         batch_size = 100
         for i in range(0, len(ids), batch_size):
             self.collection.add(
-                ids=ids[i:i+batch_size],
-                documents=documents[i:i+batch_size],
-                embeddings=embeddings[i:i+batch_size],
-                metadatas=metadatas[i:i+batch_size],
+                ids=ids[i:i + batch_size],
+                documents=documents[i:i + batch_size],
+                embeddings=embeddings[i:i + batch_size],
+                metadatas=metadatas[i:i + batch_size] if metadatas else None,
             )
-        logger.info(f"Added {len(chunks)} chunks to vector store")
+        logger.info(f"Added {len(ids)} chunks to vector store")
 
     def query(self, query_embedding: List[float], top_k: int = 20) -> Dict:
         if not self.collection:

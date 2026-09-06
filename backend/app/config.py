@@ -3,6 +3,8 @@ ED Triage Assist — RAG Pipeline Configuration
 Set your API keys via environment variables or a .env file (not committed to git).
 """
 from pydantic_settings import BaseSettings
+from pydantic import Field
+from pathlib import Path
 from typing import Optional
 
 
@@ -39,13 +41,14 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     cors_origins: str = "*"
-    documents_dir: str = "../data"
-    processed_dir: str = "../data/processed"
+    documents_dir: str = Field(default_factory=lambda: str(Path(__file__).resolve().parent.parent.parent / "data"))
+    processed_dir: str = Field(default_factory=lambda: str(Path(__file__).resolve().parent.parent.parent / "data" / "processed"))
     max_file_size_mb: int = 50
 
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = 'ignore'
 
     @property
     def cors_origins_list(self) -> list[str]:

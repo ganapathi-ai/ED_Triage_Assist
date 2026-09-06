@@ -6,6 +6,7 @@ import logging
 import numpy as np
 from typing import List, Tuple
 from dataclasses import dataclass
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 

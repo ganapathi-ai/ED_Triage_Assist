@@ -10,10 +10,16 @@ from typing import Optional
 from dataclasses import dataclass, field
 
 import pdfplumber
-from pptx import Presentation
-from pptx.util import Inches
+try:
+    from pptx import Presentation
+    from pptx.util import Inches
+except ImportError:
+    Presentation = None
 from PIL import Image
-import pytesseract
+try:
+    import pytesseract
+except ImportError:
+    pytesseract = None
 
 
 @dataclass
