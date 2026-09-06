@@ -1,49 +1,155 @@
 """
 LLM Service
-Unified interface for multiple LLM providers including OpenRouter.
+Multi-provider cascade: tries providers in priority order, falls back automatically.
+Priority: OpenRouter → Groq → Fallback message
+This ensures AI responses are always returned even if one API is down/rate-limited.
 """
 import logging
 import os
-from typing import Optional, List, Dict
-import httpx
+from typing import Optional, List, Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
 
-class LLMService:
-    """Unified LLM service supporting OpenRouter, Groq, OpenAI, Anthropic."""
+class LLMProvider:
+    """Base class for a single LLM provider."""
+
+    def generate(self, prompt: str, system_prompt: Optional[str], max_tokens: int, temperature: float, model: str) -> str:
+        raise NotImplementedError
+
+
+class OpenRouterProvider(LLMProvider):
+    """OpenRouter — free tier with multiple models (best quality)."""
+
+    MODELS = [
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "google/gemma-4-31b-it:free",
+        "minimax/minimax-m2.7:free",
+    ]
 
     def __init__(self):
-        self.provider = os.getenv("LLM_PROVIDER", "openrouter")
         self._client = None
 
     def _get_client(self):
         if self._client is None:
-            if self.provider == "openai":
-                import openai
-                api_key = os.getenv("OPENAI_API_KEY", "")
-                self._client = openai.OpenAI(api_key=api_key)
-            elif self.provider == "anthropic":
-                import anthropic
-                api_key = os.getenv("ANTHROPIC_API_KEY", "")
-                self._client = anthropic.Anthropic(api_key=api_key)
-            elif self.provider == "groq":
-                from groq import Groq
-                api_key = os.getenv("GROQ_API_KEY", "")
-                self._client = Groq(api_key=api_key)
-            elif self.provider == "openrouter":
-                # OpenRouter uses OpenAI-compatible API
-                import openai
-                api_key = os.getenv("OPENROUTER_API_KEY", "")
-                self._client = openai.OpenAI(
-                    api_key=api_key,
-                    base_url="https://openrouter.ai/api/v1",
-                    default_headers={
-                        "HTTP-Referer": "https://ed-triage-assist-api.onrender.com",
-                        "X-Title": "ED Triage Assist",
-                    }
-                )
+            import openai
+            api_key = os.getenv("OPENROUTER_API_KEY", "")
+            if not api_key:
+                raise RuntimeError("OPENROUTER_API_KEY not set")
+            self._client = openai.OpenAI(
+                api_key=api_key,
+                base_url="https://openrouter.ai/api/v1",
+                default_headers={
+                    "HTTP-Referer": "https://ed-triage-assist-api.onrender.com",
+                    "X-Title": "ED Triage Assist",
+                },
+            )
         return self._client
+
+    def generate(self, prompt: str, system_prompt: Optional[str], max_tokens: int, temperature: float, model: str) -> str:
+        client = self._get_client()
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        # Try each model in order until one works
+        target_model = model or self.MODELS[0]
+        # If the configured model isn't a known free model, prepend it
+        model_list = [target_model] + [m for m in self.MODELS if m != target_model]
+
+        last_error = None
+        for m in model_list:
+            try:
+                response = client.chat.completions.create(
+                    model=m,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                content = response.choices[0].message.content
+                if content:
+                    logger.info(f"OpenRouter OK [{m}]")
+                    return content
+                else:
+                    logger.warning(f"OpenRouter [{m}] returned None content, trying next model")
+            except Exception as e:
+                last_error = e
+                logger.warning(f"OpenRouter [{m}] failed: {e}")
+                continue
+
+        raise RuntimeError(f"All OpenRouter models failed. Last error: {last_error}")
+
+
+class GroqProvider(LLMProvider):
+    """Groq — fast inference, free tier fallback."""
+
+    MODELS = [
+        "groq/compound-mini",
+        "groq/compound",
+        "qwen/qwen3.8-27b",
+    ]
+
+    def __init__(self):
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            from groq import Groq
+            api_key = os.getenv("GROQ_API_KEY", "")
+            if not api_key:
+                raise RuntimeError("GROQ_API_KEY not set")
+            self._client = Groq(api_key=api_key)
+        return self._client
+
+    def generate(self, prompt: str, system_prompt: Optional[str], max_tokens: int, temperature: float, model: str) -> str:
+        client = self._get_client()
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        model_list = self.MODELS
+
+        last_error = None
+        for m in model_list:
+            # Try with normal tokens first, then reduced if 413
+            for tokens in [min(max_tokens, 1000), 400]:
+                try:
+                    response = client.chat.completions.create(
+                        model=m,
+                        messages=messages,
+                        max_tokens=tokens,
+                        temperature=temperature,
+                    )
+                    content = response.choices[0].message.content
+                    if content:
+                        logger.info(f"Groq OK [{m}] (max_tokens={tokens})")
+                        return content
+                except Exception as e:
+                    err_str = str(e)
+                    last_error = e
+                    if "413" in err_str or "too_large" in err_str or "request_too_large" in err_str:
+                        logger.warning(f"Groq [{m}] 413 too large, retrying with {tokens//2} tokens")
+                        continue  # Retry inner loop with fewer tokens
+                    else:
+                        logger.warning(f"Groq [{m}] failed: {e}")
+                        break  # Move to next model
+
+        raise RuntimeError(f"All Groq models failed. Last error: {last_error}")
+
+
+class LLMService:
+    """
+    Multi-provider LLM service with automatic cascade fallback.
+    Tries providers in order: OpenRouter → Groq → Informative fallback.
+    """
+
+    def __init__(self):
+        self._providers: List[Tuple[str, LLMProvider]] = [
+            ("openrouter", OpenRouterProvider()),
+            ("groq", GroqProvider()),
+        ]
 
     def generate(
         self,
@@ -53,73 +159,31 @@ class LLMService:
         temperature: float = 0.1,
         model: str = None,
     ) -> str:
-        try:
-            model = model or os.getenv("LLM_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+        """
+        Generate a response, cascading through providers until one succeeds.
+        """
+        model = model or os.getenv("LLM_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+        errors = []
 
-            if self.provider == "openai":
-                return self._generate_openai_compat(prompt, system_prompt, max_tokens, temperature, model)
-            elif self.provider == "anthropic":
-                return self._generate_anthropic(prompt, system_prompt, max_tokens, temperature, model)
-            elif self.provider == "groq":
-                return self._generate_groq(prompt, system_prompt, max_tokens, temperature, model)
-            elif self.provider == "openrouter":
-                return self._generate_openai_compat(prompt, system_prompt, max_tokens, temperature, model)
-            else:
-                return self._generate_fallback(prompt)
-        except Exception as e:
-            logger.error(f"LLM generation failed ({self.provider}): {e}")
-            return self._generate_fallback(prompt)
+        for provider_name, provider in self._providers:
+            try:
+                result = provider.generate(prompt, system_prompt, max_tokens, temperature, model)
+                if result:
+                    return result
+            except Exception as e:
+                logger.warning(f"Provider '{provider_name}' failed: {e}")
+                errors.append(f"{provider_name}: {e}")
+                continue
 
-    def _generate_openai_compat(self, prompt, system_prompt, max_tokens, temperature, model):
-        """Generate using OpenAI-compatible API (works for OpenAI and OpenRouter)."""
-        client = self._get_client()
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-        content = response.choices[0].message.content
-        # Some OpenRouter models return None content (streaming only) — handle gracefully
-        return content or self._generate_fallback(prompt)
+        # All providers failed — return informative fallback
+        logger.error(f"All LLM providers failed: {errors}")
+        return self._generate_fallback(prompt, errors)
 
-    def _generate_anthropic(self, prompt, system_prompt, max_tokens, temperature, model):
-        client = self._get_client()
-        kwargs = {
-            "model": model or "claude-sonnet-4-20250514",
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        if system_prompt:
-            kwargs["system"] = system_prompt
-        response = client.messages.create(**kwargs)
-        return response.content[0].text
-
-    def _generate_groq(self, prompt, system_prompt, max_tokens, temperature, model):
-        """Generate using the Groq SDK."""
-        client = self._get_client()
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-        return response.choices[0].message.content
-
-    def _generate_fallback(self, prompt: str) -> str:
+    def _generate_fallback(self, prompt: str, errors: List[str] = None) -> str:
         return (
-            "I'm currently unable to generate an AI response. "
-            "The triage prediction features (ESI level, deterioration risk, wait time) still work. "
-            "Please check the AI Chat configuration or try again shortly."
+            "⚠️ AI response temporarily unavailable (all LLM providers are busy or rate-limited). "
+            "The Triage predictions (ESI level, deterioration risk, wait time) are still fully functional. "
+            "Please try the AI Chat again in a moment."
         )
 
 
