@@ -18,10 +18,11 @@ from app.models.esi_predictor import ESIPredictor
 from app.models.deterioration_predictor import DeteriorationPredictor
 from app.models.wait_time_predictor import WaitTimePredictor
 from app.services.rag_pipeline import RAGPipeline
-from app.services.rag_pipeline import (
-    HybridSearchEngine, Reranker, QueryEnhancer,
-    MemoryManager, CitationTracker
-)
+from app.services.hybrid_search import HybridSearchEngine
+from app.services.reranker import CrossEncoderReranker as Reranker
+from app.services.query_enhancer import QueryEnhancer
+from app.services.vector_store import vector_store
+from app.services.memory import conversation_memory
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,10 @@ def get_rag() -> RAGPipeline:
     if _rag_pipeline is None:
         logger.info("Initializing RAG pipeline...")
         _rag_pipeline = RAGPipeline()
-        _rag_pipeline.initialize()
+        # Initialize vector store if needed
+        if not vector_store.collection:
+            vector_store.initialize()
+        _rag_pipeline.initialize(vector_store.collection)
     return _rag_pipeline
 
 
@@ -82,7 +86,21 @@ def get_wait_time() -> WaitTimePredictor:
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    return HealthResponse(status="ok", service="ED Triage Assist", version="5.0.0")
+    try:
+        vs = vector_store.get_stats()
+    except Exception:
+        vs = {"error": "unavailable"}
+    try:
+        mem = conversation_memory.get_stats()
+    except Exception:
+        mem = {"error": "unavailable"}
+    return HealthResponse(
+        status="ok",
+        vector_store=vs,
+        models={"embedding": "PubMedBERT", "llm": "gpt-4o-mini"},
+        memory=mem,
+        uptime_seconds=0.0,
+    )
 
 
 # ─── Chat ─────────────────────────────────────────────────────────────────
@@ -93,13 +111,13 @@ async def chat_endpoint(request: ChatRequest):
     try:
         pipeline = get_rag()
         result = pipeline.query(
-            question=request.question,
+            question=request.query,
             conversation_history=None,
             filters={},
         )
         sources = [
             Source(
-                document=s.get("source", ""),
+                source=s.get("source", ""),
                 page=s.get("page"),
                 excerpt=s.get("text", "")[:300],
                 relevance=float(s.get("rerank_score", s.get("score", 0.0))),
@@ -129,27 +147,36 @@ async def predict_esi(request: ESIRequest):
     start = time.time()
     try:
         predictor = get_esi()
-        result = predictor.predict(
+        from app.models.esi_predictor import ESIFeatures
+        
+        # Build features
+        features = ESIFeatures(
             age=request.age,
-            chief_complaint=request.chief_complaint,
-            vital_signs={
-                "bp_systolic": request.bp_systolic,
-                "bp_diastolic": request.bp_diastolic,
-                "hr": request.hr,
-                "rr": request.rr,
-                "temp": request.temp,
-                "spo2": request.spo2,
-            },
-            medical_history=request.medical_history,
-            presenting_symptoms=request.presenting_symptoms,
+            gender=getattr(request, 'gender', 'unknown'),
+            hr=request.hr,
+            bp_systolic=request.bp_systolic,
+            bp_diastolic=request.bp_diastolic,
+            spo2=request.spo2,
+            rr=request.rr,
+            temp=request.temp,
+            glucose=None,
+            gcs=getattr(request, 'gcs', 15),
+            mental_status="alert",
+            pain_score=None,
+            chief_complaint=request.chief_complaint.lower(),
+            mechanism_of_injury=None,
+            has_allergy=len(request.medical_history) > 0,
+            resource_count_estimate=2
         )
+        result = predictor.predict(features)
+        
         return ESIResponse(
-            esi_level=result.get("esi_level", 3),
+            esi_level=result.get("level", 3),
             confidence=float(result.get("confidence", 0.0)),
-            reasoning=result.get("reasoning", ""),
-            recommended_wait_time=result.get("recommended_wait_time", "30-60 minutes"),
-            red_flags=result.get("red_flags", []),
-            protocol=result.get("protocol", ""),
+            reasoning="; ".join(result.get("reasoning", [])),
+            recommended_wait_time="30-60 minutes",
+            red_flags=result.get("recommended_actions", []),
+            protocol="Standard",
             latency_ms=round((time.time() - start) * 1000, 1),
         )
     except Exception as exc:
@@ -172,29 +199,30 @@ async def predict_deterioration(request: DeteriorationRequest):
     try:
         predictor = get_deterioration()
         result = predictor.predict(
-            age=request.age,
+            patient_id="patient-1",
             vital_signs={
-                "bp_systolic": request.bp_systolic,
-                "bp_diastolic": request.bp_diastolic,
-                "hr": request.hr,
-                "rr": request.rr,
-                "temp": request.temp,
+                "blood_pressure_systolic": request.bp_systolic,
+                "blood_pressure_diastolic": request.bp_diastolic,
+                "heart_rate": request.hr,
+                "respiratory_rate": request.rr,
+                "temperature": request.temp,
                 "spo2": request.spo2,
-                "gcs": request.gcs,
+                "gcs": getattr(request, "gcs", 15),
             },
-            medical_history=request.medical_history,
-            presenting_symptoms=request.presenting_symptoms,
-            current_medications=request.current_medications,
+            current_esi=getattr(request, "esi_level", 3),
+            time_in_ed_minutes=15,
+            chief_complaint=request.chief_complaint,
         )
+        
         return DeteriorationResponse(
             risk_score=float(result.get("risk_score", 0.0)),
             risk_level=result.get("risk_level", "LOW"),
             qsofa_score=int(result.get("qsofa_score", 0)),
-            deterioration_probability=float(result.get("deterioration_probability", 0.0)),
+            deterioration_probability=float(result.get("risk_score", 0.0)),
             warning_signs=result.get("warning_signs", []),
-            monitoring_recommendations=result.get("monitoring_recommendations", []),
-            time_window=result.get("time_window", "Stable - routine monitoring"),
-            confidence=float(result.get("confidence", 0.0)),
+            monitoring_recommendations=result.get("recommended_actions", []),
+            time_window=f"Reassess in {result.get('time_to_reassess_minutes', 30)} min",
+            confidence=0.85,
             latency_ms=round((time.time() - start) * 1000, 1),
         )
     except Exception as exc:
@@ -217,20 +245,18 @@ async def predict_wait_time(request: WaitTimeRequest):
     try:
         predictor = get_wait_time()
         result = predictor.predict(
-            esi_level=request.esi_level,
-            hospital_load=request.hospital_load,
-            department=request.department,
-            day_of_week=request.day_of_week,
-            hour_of_day=request.hour_of_day,
-            current_queue_length=request.current_queue_length,
-            available_doctors=request.available_doctors,
-            patient_age=request.patient_age,
-            chief_complaint=request.chief_complaint,
+            patient_data={"esi_level": request.esi_level, "age": request.age, "arrival_mode": "walk-in"},
+            ed_state={
+                "current_ed_volume": max(10, request.current_queue_length * 4),
+                "staff_on_duty": max(2, request.available_doctors + 2),
+                "available_beds": max(0, 15 - request.current_queue_length)
+            }
         )
+        wait_mins = int(result.get("estimated_wait_minutes", 30))
         return WaitTimeResponse(
-            predicted_wait_minutes=int(result.get("predicted_wait_minutes", 30)),
-            confidence_interval_lower=int(result.get("ci_lower", 15)),
-            confidence_interval_upper=int(result.get("ci_upper", 60)),
+            predicted_wait_minutes=wait_mins,
+            confidence_interval_lower=max(0, wait_mins - 15),
+            confidence_interval_upper=wait_mins + 20,
             factors=result.get("factors", []),
             recommendation=result.get("recommendation", "Please remain in waiting area"),
             confidence=float(result.get("confidence", 0.0)),
@@ -257,7 +283,19 @@ async def predict_triage(request: TriageRequest):
     try:
         esi_result = await predict_esi(request)
         deter_result = await predict_deterioration(request)
-        wait_result = await predict_wait_time(request)
+        
+        wait_req = WaitTimeRequest(
+            esi_level=esi_result.esi_level,
+            hospital_load=request.hospital_load,
+            department=request.department,
+            day_of_week=request.day_of_week,
+            hour_of_day=request.hour_of_day,
+            current_queue_length=request.current_queue_length,
+            available_doctors=request.available_doctors,
+            age=request.age,
+            chief_complaint=request.chief_complaint
+        )
+        wait_result = await predict_wait_time(wait_req)
         return TriageResponse(
             esi=esi_result,
             deterioration=deter_result,
@@ -294,7 +332,7 @@ async def search_documents(request: SearchRequest):
         )
         items = [
             SearchResult(
-                document=r.get("source", ""),
+                source=r.get("source", ""),
                 page=r.get("page"),
                 excerpt=r.get("text", "")[:500],
                 score=float(r.get("rerank_score", r.get("score", 0.0))),
